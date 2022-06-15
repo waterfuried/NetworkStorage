@@ -1,12 +1,22 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<?import javafx.scene.control.ListView?>
-<?import javafx.scene.control.TextField?>
-<?import javafx.scene.layout.AnchorPane?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
 
-<AnchorPane maxHeight="-Infinity" maxWidth="-Infinity" minHeight="-Infinity" minWidth="-Infinity" prefHeight="410.0"
-            prefWidth="253.0" xmlns="http://javafx.com/javafx/18" xmlns:fx="http://javafx.com/fxml/1"
-            fx:controller="ChatController">
-    <TextField onAction="#sendMessage" fx:id="textView" layoutX="14.0" layoutY="367.0" prefHeight="29.0" prefWidth="226.0"/>
-    <ListView fx:id="listView" layoutX="14.0" layoutY="14.0" prefHeight="344.0" prefWidth="226.0"/>
-</AnchorPane>
+<VBox xmlns="http://javafx.com/javafx/16" xmlns:fx="http://javafx.com/fxml/1" fx:controller="NeStController">
+    <MenuBar>
+        <Menu text="File">
+            <MenuItem fx:id="menuItemLogIn" onAction="#showRegForm" text="Log In..." />
+            <MenuItem fx:id="menuItemLogOut" disable="true" onAction="#logOut" text="Log out" />
+            <SeparatorMenuItem />
+            <MenuItem fx:id="menuItemUploadFile" text="Upload selected" disable="true" onAction="#upload" />
+            <MenuItem fx:id="menuItemDownloadFile" text="Download selected" disable="true" onAction="#download" />
+            <SeparatorMenuItem />
+            <MenuItem onAction="#performExit" text="Exit" />
+        </Menu>
+    </MenuBar>
+    <HBox fx:id="container" VBox.vgrow="ALWAYS">
+        <fx:include fx:id="clientView" source="Panel.fxml" HBox.hgrow="ALWAYS" />
+        <fx:include fx:id="serverView" source="Panel.fxml" HBox.hgrow="ALWAYS" />
+    </HBox>
+</VBox>

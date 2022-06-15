@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+<?import javafx.scene.text.*?>
+
+<VBox xmlns="http://javafx.com/javafx/16" xmlns:fx="http://javafx.com/fxml/1" fx:controller="PanelController">
+<!--
+если оставить эти свойства (по умолчанию),
+изменение размеров окна не будет влиять на размеры внутренних контейнеров;
+замена же их знака на "плюс" приведет к OutOfMemoryError:
+maxHeight="-Infinity" maxWidth="-Infinity" minHeight="-Infinity" minWidth="-Infinity"
+-->
+    <HBox>
+        <VBox alignment="CENTER" HBox.hgrow="ALWAYS">
+            <Label fx:id="nameLabel" text="Client files">
+            <font>
+               <Font name="System Bold" size="12.0" />
+            </font></Label>
+        </VBox>
+        <ComboBox fx:id="disks" onAction="#cmbxChangeDisk" />
+        <TextField fx:id="curPath" editable="false" HBox.hgrow="ALWAYS" />
+        <Button fx:id="btnLevelUp" onAction="#btnLevelUpAction" text=".." />
+        <Button fx:id="btnGoBack" disable="true" onAction="#btnGoBackAction" text="←" />
+    </HBox>
+    <TableView fx:id="filesTable" VBox.vgrow="ALWAYS" />
+    <properties>
+        <ctrlRef><fx:reference source="controller"/></ctrlRef>
+    </properties>
+</VBox>

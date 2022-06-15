@@ -13,11 +13,17 @@ public class Network {
         os = new DataOutputStream(socket.getOutputStream());
     }
 
-    public String readMessage() throws IOException {
+    public DataInputStream getIs() { return is; }
+    public void setIs(DataInputStream is) { this.is = is; }
+
+    public DataOutputStream getOs() { return os; }
+    public void setOs(DataOutputStream os) { this.os = os; }
+
+    public String read() throws IOException {
         return is.readUTF();
     }
 
-    public void writeMessage(String message) throws IOException {
+    public void write(String message) throws IOException {
         os.writeUTF(message);
         os.flush();
     }
