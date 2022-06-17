@@ -48,27 +48,31 @@
         /download имя-на-сервере путь-на-компьютере-клиента размер
 
     команды 5 и 6 работают по принципу "1 за раз" - например,
-    при заливке папки на сервер (размер указывается как 0)
+    при заливке папки на сервер (размер указывается как -1)
     она только создается на нем, но ничем не наполняется,
     даже если на компьютере клиента в ней что-либо есть.
     > если папка содержит несколько подпапок и/или файлов,
       перед заливкой ее на сервер нужно убедиться в наличии
       достаточного свободного места.
 */
+import prefs.Prefs;
+
 import javafx.application.Platform;
+
 import javafx.fxml.FXML;
 import javafx.fxml.FXMLLoader;
 import javafx.fxml.Initializable;
+
 import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.scene.control.Alert;
 import javafx.scene.control.MenuItem;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
+
 import javafx.stage.Modality;
 import javafx.stage.Stage;
 import javafx.stage.StageStyle;
-import prefs.Prefs;
 
 import java.io.IOException;
 import java.net.URL;
@@ -76,19 +80,19 @@ import java.nio.file.Paths;
 import java.util.ResourceBundle;
 
 public class NeStController implements Initializable {
-    @FXML HBox container;
     @FXML VBox clientView, serverView;
-    private Network network;
     // копирование файлов на/с сервера хотел сделать через drag-n-drop, но пока не соображу,
     // как информировать методы перетаскивания файлов панелей о получении фокуса одной из них
     @FXML MenuItem menuItemLogIn, menuItemLogOut, menuItemUploadFile, menuItemDownloadFile;
 
+    private Network network;
+
     private Stage stage, regStage;
     private RegController regController;
+
     PanelController cliCtrl, srvCtrl;
 
-    boolean authorized = false;
-    boolean clientFocused, serverFocused;
+    boolean authorized = false, clientFocused, serverFocused;
 
     String user, password;
 
@@ -223,7 +227,7 @@ public class NeStController implements Initializable {
                 cliCtrl.getSelectedFilename(),
                 cliCtrl.getCurPath(),
                 dst,
-                cliCtrl.filesTable.getSelectionModel().getSelectedItem().size + ""));
+                cliCtrl.filesTable.getSelectionModel().getSelectedItem().getSize() + ""));
     }
 
     // запрос на копирование файла/папки с сервера
@@ -233,7 +237,7 @@ public class NeStController implements Initializable {
         sendCmdOrRequest(Prefs.getCommand(Prefs.COM_DOWNLOAD,
                 srvCtrl.getSelectedFilename(),
                 cliCtrl.getCurPath(),
-                srvCtrl.filesTable.getSelectionModel().getSelectedItem().size+""));
+                srvCtrl.filesTable.getSelectionModel().getSelectedItem().getSize()+""));
     }
 
     // прочие вспомогательные методы
@@ -290,7 +294,8 @@ public class NeStController implements Initializable {
         cliCtrl = (PanelController)clientView.getProperties().get("ctrlRef");
         srvCtrl = (PanelController)serverView.getProperties().get("ctrlRef");
 
-        // отслеживать как вообще наличие фокуса на панели, так и выбора в ней любого элемента
+        // отслеживать как вообще наличие фокуса на панели с файлами/папками,
+        // так и выбора в ней любого элемента
         cliCtrl.filesTable.getSelectionModel().selectedIndexProperty().addListener(
                 (observableValue, oldValue, newValue) -> {
                     clientFocused = newValue.intValue() >= 0;

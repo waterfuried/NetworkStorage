@@ -22,7 +22,8 @@ public class Prefs {
     // команды сервера
     public static final String COM_AUTHORIZE = "user";
     //public static final String COM_REGISTER = "reg";
-    public static final String[] COM_QUIT = { "quit", "exit" };
+    public static final String COM_QUIT ="quit";
+    public static final String COM_EXIT ="exit";
 
     public static final String COM_GET_SPACE = "space";
     public static final String COM_GET_FILES = "files";
@@ -30,9 +31,24 @@ public class Prefs {
     public static final String COM_UPLOAD = "upload";
     public static final String COM_DOWNLOAD = "download";
 
+    public static final String COM_REMOVE = "remove";
+
+    // команды терминала
+    public static final String COM_TERM_CAT = "cat";
+    public static final String COM_TERM_CD = "cd";
+    public static final String COM_TERM_LIST = "ls";
+    public static final String[] COM_TERM_USAGE = {
+            "filename", // cat
+            "folder_name", // cd
+            null, //ls
+            null, //exit
+            null //quit
+    };
+
     // ответы сервера на запросы
     public static final String SRV_ACCEPT = "NEST_DONE";
     public static final int SRV_SUCCESS = 0; // выполнено успешно
+
     public static final String SRV_REFUSE = "NEST_ERR";
     public static final int ERR_WRONG_AUTH = 0;
     public static final int ERR_NO_SUCH_FILE = 1;
@@ -49,6 +65,9 @@ public class Prefs {
     // рекурсивное вычисление размера домашней папки (~14Гб, ~80K файлов) вызывает переполнение стека
     // особенно ее AppData
     public static final String serverURL = Paths.get("temp").normalize().toAbsolutePath().toString();//System.getProperty("user.home");
+
+    // приглашение ввода в текстовом терминале
+    public static final String terminalPrompt = ">> ";
 
     public static String getCommand(String cmdName, String ... args) {
         if (args == null || args.length == 0) return COM_ID + cmdName;
@@ -68,7 +87,34 @@ public class Prefs {
 
     public static List<String> getExitCommand() {
         List<String> l = new ArrayList<>();
-        for (String s : COM_QUIT) l.add(getCommand(s));
+        l.add(getCommand(COM_QUIT));
+        l.add(getCommand(COM_EXIT));
         return l;
+    }
+
+    public static String getCmdHelp(int cmd_id) {
+        return getCmdHelp(cmd_id, true);
+    }
+
+    public static String getCmdHelp(int cmd_id, boolean showUsage) {
+        String s = "";
+        if (cmd_id < COM_TERM_USAGE.length) {
+            switch (cmd_id) {
+                case 0: s = COM_TERM_CAT; break;
+                case 1: s = COM_TERM_CD;
+            }
+            if (showUsage) s = "command usage: "+s;
+            if (COM_TERM_USAGE[cmd_id] != null) s += " "+COM_TERM_USAGE[cmd_id];
+        }
+        return s;
+    }
+
+    public static String getHelp() {
+        return "Available terminal commands are:" +
+                "\n\r\t" + getCmdHelp(0, false) +
+                "\n\r\t" + getCmdHelp(1, false) +
+                "\n\r\t" + COM_TERM_LIST +
+                "\n\r\t" + COM_QUIT +
+                "\n\r\t" + COM_EXIT;
     }
 }

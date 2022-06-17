@@ -32,20 +32,20 @@ public class ClientHandler implements Runnable {
             while (true) {
                 String cmd = is.readUTF();
                 System.out.println("received: " + cmd);
-				if (cmd.startsWith(Prefs.COM_ID)) {
-					String s = cmd.toLowerCase();
-					// команда авторизации
-					if (s.startsWith(Prefs.getCommand(Prefs.COM_AUTHORIZE))) {
-						String[] val = s.split(" ", 3);
-						// в случае ошибки вернуть код 0,
-						// в случае успеха - доп. код 0, имя и пароль
-						sendResponse(val[2].length() < Prefs.MIN_PWD_LEN
-								? Prefs.getCommand(Prefs.SRV_REFUSE, Prefs.ERR_WRONG_AUTH)
-								: Prefs.getCommand(Prefs.SRV_ACCEPT, Prefs.SRV_SUCCESS+" "+val[1]+" "+val[2]));
-					}
+                if (cmd.startsWith(Prefs.COM_ID)) {
+                    String s = cmd.toLowerCase();
+                    // команда авторизации
+                    if (s.startsWith(Prefs.getCommand(Prefs.COM_AUTHORIZE))) {
+                        String[] val = s.split(" ", 3);
+                        // в случае ошибки вернуть код 0,
+                        // в случае успеха - доп. код 0, имя и пароль
+                        sendResponse(val[2].length() < Prefs.MIN_PWD_LEN
+                            ? Prefs.getCommand(Prefs.SRV_REFUSE, Prefs.ERR_WRONG_AUTH)
+                            : Prefs.getCommand(Prefs.SRV_ACCEPT, Prefs.SRV_SUCCESS+"", val[1], val[2]));
+                    }
                     // команда завершения сеанса
-                    if (Prefs.isExitCommand(s)) sendResponse(s);
                     // получив от клиента запрос на завершение сеанса, отправить запрос обратно
+                    if (Prefs.isExitCommand(s)) sendResponse(s);
                     // запрос на информацию об элементах в папке пользователя на сервере
                     if (s.startsWith(Prefs.getCommand(Prefs.COM_GET_FILES))) {
                         String[] arg = s.split(" ", 2);
@@ -53,8 +53,7 @@ public class ClientHandler implements Runnable {
                         if (arg.length > 1) path = path.resolve(arg[1]);
                         List<FileInfo> list = FileInfo.getItemsInfo(path);
                         if (list.size() > 0) {
-                            sendResponse(Prefs.getCommand(Prefs.SRV_ACCEPT,
-                                    Prefs.COM_GET_FILES, list.size()+""));
+                            sendResponse(Prefs.getCommand(Prefs.SRV_ACCEPT, Prefs.COM_GET_FILES, list.size()+""));
                             //TODO: помимо возврата размера списка нужно сформировать и отправить сам список
                             /*for (FileInfo fi : list) {
                                 os.writeUTF(fi.filename);
@@ -93,6 +92,11 @@ public class ClientHandler implements Runnable {
                                     while ((bytesRead = bis.read(buf)) >= 0) bos.write(buf, 0, bytesRead);
                                 } catch (Exception ex) { ex.printStackTrace(); }
                                 success = new File(dst).length() == sz;
+                                if (success)
+                                    freeSpace -= sz;
+                                else {
+                                    //TODO: не полностью залитый файл следует удалить?
+                                }
                             } else
                                 // папка
                                 success = new File(dst).mkdir();
@@ -118,6 +122,7 @@ public class ClientHandler implements Runnable {
                                 while ((bytesRead = bis.read(buf)) >= 0) bos.write(buf, 0, bytesRead);
                             } catch (Exception ex) { ex.printStackTrace(); }
                             success = new File(dst).length() == sz;
+                            //TODO: не полностью скачанный файл следует удалить?
                         } else
                             // папка
                             success = new File(dst).mkdir();
@@ -125,7 +130,8 @@ public class ClientHandler implements Runnable {
                             ? Prefs.getCommand(Prefs.SRV_ACCEPT, Prefs.COM_DOWNLOAD, Prefs.SRV_SUCCESS+"")
                             : Prefs.getCommand(Prefs.SRV_REFUSE, Prefs.ERR_CANNOT_COMPLETE));
                     }
-				}
+                    //TODO: добавить команду удаления файла/папки с сервера
+                }
             }
         } catch (Exception ex) { System.err.println("Connection was broken"); }
     }

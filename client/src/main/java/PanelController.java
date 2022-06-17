@@ -29,6 +29,7 @@ public class PanelController implements Initializable {
     private Stack prevPath;
     private int curDiskIdx;
     private boolean serverMode = false;
+
     /*private String uploading, downloading;
     private NeStController parentController;
 

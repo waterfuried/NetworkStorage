@@ -15,7 +15,7 @@
             <MenuItem onAction="#performExit" text="Exit" />
         </Menu>
     </MenuBar>
-    <HBox fx:id="container" VBox.vgrow="ALWAYS">
+    <HBox VBox.vgrow="ALWAYS">
         <fx:include fx:id="clientView" source="Panel.fxml" HBox.hgrow="ALWAYS" />
         <fx:include fx:id="serverView" source="Panel.fxml" HBox.hgrow="ALWAYS" />
     </HBox>
