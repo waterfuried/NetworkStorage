@@ -1,10 +1,13 @@
 import java.io.File;
 import java.io.IOException;
+
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -17,29 +20,29 @@ public class FileInfo {
         FileType(int type) { this.type = type; }
     }
 
-    String filename;
-    FileType type;
-    long size;
-    LocalDateTime modified;
+    private String filename;
+    private FileType type;
+    private long size;
+    private LocalDateTime modified;
 
-    public String getFilename() { return filename; }
-    public void setFilename(String filename) { this.filename = filename; }
+    String getFilename() { return filename; }
+    void setFilename(String filename) { this.filename = filename; }
 
-    public FileType getType() { return type; }
-    public void setType(FileType type) { this.type = type; }
+    FileType getType() { return type; }
+    void setType(FileType type) { this.type = type; }
 
-    public long getSize() { return size; }
-    public void setSize(long size) { this.size = size; }
+    long getSize() { return size; }
+    void setSize(long size) { this.size = size; }
 
-    public LocalDateTime getModified() { return modified; }
-    public void setModified(LocalDateTime modified) { this.modified = modified; }
+    LocalDateTime getModified() { return modified; }
+    void setModified(LocalDateTime modified) { this.modified = modified; }
 
-    public FileInfo(Path path) {
+    FileInfo(Path path) {
         try {
             filename = path.getFileName().toString();
             size = Files.size(path);
             type = Files.isDirectory(path) ? FileType.FOLDER : FileType.FILE;
-            if (type == FileType.FOLDER) size = -1;
+            if (type == FileType.FOLDER) size = -1L;
             modified = LocalDateTime.ofInstant(Files.getLastModifiedTime(path).toInstant(), ZoneOffset.ofHours(3));
         }
         catch (IOException ex) {
@@ -67,6 +70,8 @@ public class FileInfo {
     static long getSizes(Path path) {
         long sum = 0;
         List<String> list = getItems(path);
+        // для прохода по пути с получением всех его элементов
+        // можно использовать метод Files.walk
         for (String l : list) {
             Path fullPath = Paths.get(path.toString(), l);
             try {
