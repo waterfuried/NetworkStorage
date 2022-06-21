@@ -1,53 +1,47 @@
-import java.io.File;
-import java.io.IOException;
+import java.io.*;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
+import java.nio.file.*;
 
-import java.time.LocalDateTime;
-import java.time.ZoneOffset;
+import java.time.*;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
+import java.util.*;
 
 public class FileInfo {
-    enum FileType {
-        FOLDER(0), FILE(1);
-        private final int type;
-        int getType() { return type; }
-        FileType(int type) { this.type = type; }
-    }
-
     private String filename;
-    private FileType type;
-    private long size;
+    private long size; //определяет также тип элемента: -1 - папка, иначе - файл
     private LocalDateTime modified;
 
     String getFilename() { return filename; }
     void setFilename(String filename) { this.filename = filename; }
 
-    FileType getType() { return type; }
-    void setType(FileType type) { this.type = type; }
-
     long getSize() { return size; }
     void setSize(long size) { this.size = size; }
 
     LocalDateTime getModified() { return modified; }
+    long getModifiedAsLong() { return getModified().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli(); }
+    static LocalDateTime getModified(long time) {
+        return LocalDateTime.ofInstant(Instant.ofEpochMilli(time), ZoneId.systemDefault()); // or ZoneOffset.UTC
+    }
+
     void setModified(LocalDateTime modified) { this.modified = modified; }
+    void setModified(String modified) throws NumberFormatException {
+        this.modified = getModified(Long.parseLong(modified));
+    }
 
     FileInfo(Path path) {
         try {
             filename = path.getFileName().toString();
-            size = Files.size(path);
-            type = Files.isDirectory(path) ? FileType.FOLDER : FileType.FILE;
-            if (type == FileType.FOLDER) size = -1L;
-            modified = LocalDateTime.ofInstant(Files.getLastModifiedTime(path).toInstant(), ZoneOffset.ofHours(3));
-        }
-        catch (IOException ex) {
+            size = Files.isDirectory(path) ? -1L : Files.size(path);
+            modified = LocalDateTime.ofInstant(Files.getLastModifiedTime(path).toInstant(), ZoneId.systemDefault());
+        } catch (IOException ex) {
             throw new RuntimeException(ex.getMessage());
         }
+    }
+
+    FileInfo(String filename, long size, LocalDateTime modified) {
+        this.filename = filename;
+        this.size = size;
+        this.modified = modified;
     }
 
     // получить список элементов (папок и файлов) в папке
