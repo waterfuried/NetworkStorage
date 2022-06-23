@@ -1,16 +1,9 @@
-import prefs.Prefs;
+import prefs.*;
 
 import java.io.*;
 import java.net.Socket;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.time.LocalDateTime;
-import java.time.ZoneId;
-import java.time.format.DateTimeParseException;
-import java.util.List;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
+import java.nio.file.*;
+import java.util.stream.*;
 
 public class ClientHandler implements Runnable {
     private DataInputStream is;
@@ -31,7 +24,7 @@ public class ClientHandler implements Runnable {
     }
 
     @Override public void run() {
-        Path rootServerPath = Paths.get(Prefs.serverURL).normalize().toAbsolutePath();
+        Path rootServerPath = Prefs.serverURL;
         byte[] buf = new byte[Prefs.BUF_SIZE];
         try {
             // обработка команд/запросов клиента
@@ -56,27 +49,34 @@ public class ClientHandler implements Runnable {
                     if (s.startsWith(Prefs.getCommand(Prefs.COM_GET_FILES))) {
                         String[] arg = s.split(" ", 2);
                         Path path = rootServerPath;
+                        int errCode = 0, sz = 0;
+                        String list = "";
                         boolean subfolder = false;
                         if (arg.length > 1) {
                             subfolder = true;
-                            path = path.resolve(arg[1]);
+                            try { path = path.resolve(arg[1]); }
+                            catch (InvalidPathException ex) { errCode = Prefs.ERR_NO_SUCH_FILE; }
                         }
-                        //List<FileInfo> list = FileInfo.getItemsInfo(path);
-                        // можно заменить Files.list(path).map(p -> new FileInfo(p)).toList();
-                        // p -> new FileInfo(p) заменяется ссылкой на конструктор FileInfo::new
-                        try (Stream<Path> pathStream = Files.list(path)) {
-                            String list = pathStream.map(FileInfo::new)
-                                    .map(fi -> fi.getFilename()+":"+fi.getSize()+":"+fi.getModifiedAsLong())
-                                    .collect(Collectors.joining("\n"));
-                            int sz = list.split("\n").length;
-                            if (sz > 0) {
+                        if (errCode == 0) {
+                            //List<FileInfo> list = FileInfo.getItemsInfo(path);
+                            // можно заменить Files.list(path).map(p -> new FileInfo(p)).toList();
+                            // p -> new FileInfo(p) заменяется ссылкой на конструктор FileInfo::new
+                            try (Stream<Path> pathStream = Files.list(path)) {
+                                list = pathStream
+                                        .map(FileInfo::new)
+                                        .map(fi -> fi.getFilename()+":"+fi.getSize()+":"+fi.getModifiedAsLong())
+                                        .collect(Collectors.joining("\n"));
+                                sz = list.split("\n").length;
                                 if (sz == 1 && list.length() == 0) sz = 0;
-                                sendResponse(Prefs.getCommand(Prefs.SRV_ACCEPT,
-                                        Prefs.COM_GET_FILES,
-                                        sz + " " + (subfolder ? arg[1] : ".") + (sz == 0 ? "" : " "+list)));
-                            } else
-                                sendResponse(Prefs.getCommand(Prefs.SRV_REFUSE, Prefs.ERR_NO_SUCH_FILE));
-                        } catch (IOException ex) { ex.printStackTrace(); }
+                            } catch (IOException ex) {
+                                errCode = Prefs.ERR_NO_SUCH_FILE;
+                                ex.printStackTrace();
+                            }
+                        }
+                        sendResponse(errCode == 0
+                                ? Prefs.getCommand(Prefs.SRV_ACCEPT, Prefs.COM_GET_FILES,
+                                  sz + " " + (subfolder ? arg[1] : ".") + (sz == 0 ? "" : " "+list))
+                                : Prefs.getCommand(Prefs.SRV_REFUSE, Prefs.ERR_NO_SUCH_FILE));
                     }
                     if (s.startsWith(Prefs.getCommand(Prefs.COM_GET_SPACE))) {
                         freeSpace = Prefs.MAXSIZE - FileInfo.getSizes(rootServerPath);
@@ -90,7 +90,7 @@ public class ClientHandler implements Runnable {
                         try { sz = Long.parseLong(arg[4]); }
                         catch (Exception ex) { ex.printStackTrace(); }
                         // перед выполнением проверять наличие достаточного свободного места
-                        if (freeSpace-sz <= 0)
+                        if (sz >= 0 && freeSpace-sz <= 0) // поправка для папок
                             sendResponse(Prefs.getCommand(Prefs.SRV_REFUSE, Prefs.ERR_OUT_OF_SPACE));
                         else {
                             boolean success;
@@ -133,7 +133,8 @@ public class ClientHandler implements Runnable {
                         catch (Exception ex) { ex.printStackTrace(); }
                         boolean success;
                         String src = rootServerPath.resolve(arg[1]).toString(),
-                               dst = Paths.get(arg[2], arg[1]).toString();
+                               dst = Paths.get(arg[2], arg[1].substring(arg[1]
+                                       .lastIndexOf(File.separatorChar)+1)).toString();
                         if (sz >= 0) {
                             // файл
                             try (BufferedInputStream bis = new BufferedInputStream(new FileInputStream(src), Prefs.BUF_SIZE);
@@ -156,7 +157,21 @@ public class ClientHandler implements Runnable {
                             ? Prefs.getCommand(Prefs.SRV_ACCEPT, Prefs.COM_DOWNLOAD, Prefs.SRV_SUCCESS+"")
                             : Prefs.getCommand(Prefs.SRV_REFUSE, Prefs.ERR_CANNOT_COMPLETE+"", Prefs.COM_DOWNLOAD));
                     }
-                    //TODO: добавить команду удаления файла/папки с сервера
+                    if (s.startsWith(Prefs.getCommand(Prefs.COM_REMOVE))) {
+                        // /remove entry_name
+                        String[] arg = s.split(" ", 2);
+                        int errCode = 0;
+                        try {
+                            Files.delete(rootServerPath.resolve(arg[1]));
+                        } catch (IOException ex) {
+                            errCode = Prefs.ERR_NO_SUCH_FILE;
+                            if (ex instanceof DirectoryNotEmptyException)
+                                errCode = Prefs.ERR_NOT_EMPTY;
+                        }
+                        sendResponse(errCode == 0
+                                ? Prefs.getCommand(Prefs.SRV_ACCEPT, Prefs.COM_REMOVE, Prefs.SRV_SUCCESS+"")
+                                : Prefs.getCommand(Prefs.SRV_REFUSE, errCode+"", Prefs.COM_REMOVE));
+                    }
                 }
             }
         } catch (Exception ex) { System.err.println("Connection was broken"); ex.printStackTrace(); }

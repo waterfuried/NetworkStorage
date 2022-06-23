@@ -38,7 +38,7 @@ public class NioServer {
         server.configureBlocking(false);
         // регистрация канала с выбранным селектором на принятие соединений
         server.register(selector, SelectionKey.OP_ACCEPT);
-        curPath = Paths.get(Prefs.serverURL);
+        curPath = Prefs.serverURL;
     }
 
     public void start() {

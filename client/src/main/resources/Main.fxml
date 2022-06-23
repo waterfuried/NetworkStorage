@@ -9,8 +9,10 @@
             <MenuItem fx:id="menuItemLogIn" onAction="#showRegForm" text="Log In..." />
             <MenuItem fx:id="menuItemLogOut" disable="true" onAction="#logOut" text="Log out" />
             <SeparatorMenuItem />
-            <MenuItem fx:id="menuItemUploadFile" text="Upload selected item" disable="true" onAction="#tryUpload" />
-            <MenuItem fx:id="menuItemDownloadFile" text="Download selected item" disable="true" onAction="#tryDownload" />
+            <MenuItem fx:id="menuItemUpload" text="Upload selected item" disable="true" onAction="#tryUpload" />
+            <MenuItem fx:id="menuItemDownload" text="Download selected item" disable="true" onAction="#tryDownload" />
+            <SeparatorMenuItem />
+            <MenuItem fx:id="menuItemRemove" text="Remove selected item" disable="true" onAction="#tryRemove" />
             <SeparatorMenuItem />
             <MenuItem onAction="#performExit" text="Exit" />
         </Menu>

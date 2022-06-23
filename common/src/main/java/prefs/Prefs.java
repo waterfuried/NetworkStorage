@@ -48,23 +48,26 @@ public class Prefs {
     public static final int SRV_SUCCESS = 0; // выполнено успешно
 
     public static final String SRV_REFUSE = "NEST_ERR";
+    public static final String ERR_CANNOT_REMOVE = "Cannot remove";
     public static final int ERR_WRONG_AUTH = 0;
     public static final int ERR_NO_SUCH_FILE = 1;
     public static final int ERR_OUT_OF_SPACE = 2;
     public static final int ERR_CANNOT_COMPLETE = 3;
     public static final int ERR_WRONG_LIST = 4;
+    public static final int ERR_NOT_EMPTY = 5;
     public static final String[] errMessage = {
             "Authorization error",
             "No such file or folder",
             "Out of free space",
             "Cannot copy selected",
-            "Failed to get list of entries"
+            "Failed to get list of entries",
+            "Folder is not empty"
     };
 
     // папка для имитации сетевого адреса сервера
     // System.getProperty("user.home") рекурсивное вычисление размера домашней папки (~14Гб, ~80K файлов)
     // вызывает переполнение стека
-    public static final String serverURL = Paths.get("temp").normalize().toAbsolutePath().toString();
+    public static final Path serverURL = Paths.get("temp").normalize().toAbsolutePath();
 
     // используемый шаблон времени/даты
     public static final DateTimeFormatter dtFmt = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
@@ -125,17 +128,17 @@ public class Prefs {
     }
 
     public static boolean isValidPath(Path path) {
-        return !Paths.get(Prefs.serverURL).relativize(path).toString().startsWith("..");
+        return !Prefs.serverURL.relativize(path).toString().startsWith("..");
     }
 
     public static boolean isRootPath(Path path) {
-        return Paths.get(Prefs.serverURL).equals(path.normalize());
+        return Prefs.serverURL.equals(path.normalize());
     }
 
-    public static Path getRootPath() { return Paths.get(serverURL); }
+    public static Path getRootPath() { return serverURL; }
 
     public static String capitalize(String s) {
-        if (s == null || s.length() == 0) return s;
+        if (s == null || s.trim().length() == 0) return s;
         return s.substring(0, 1).toUpperCase()+s.substring(1);
     }
 }

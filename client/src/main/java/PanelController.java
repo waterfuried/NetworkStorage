@@ -1,9 +1,9 @@
-import prefs.Prefs;
+import prefs.*;
 
-import javafx.application.Platform;
 import javafx.beans.property.*;
 import javafx.fxml.*;
 import javafx.scene.control.*;
+import javafx.scene.input.*;
 
 import java.io.*;
 
@@ -11,8 +11,7 @@ import java.net.URL;
 
 import java.nio.file.*;
 
-import java.util.List;
-import java.util.ResourceBundle;
+import java.util.*;
 import java.util.stream.*;
 
 public class PanelController implements Initializable {
@@ -20,31 +19,20 @@ public class PanelController implements Initializable {
     @FXML ComboBox<String> disks;
     @FXML TextField curPath;
     @FXML TableView<FileInfo> filesTable;
-    @FXML Button btnLevelUp;
-    @FXML Button btnGoBack;
+    @FXML Button btnLevelUp, btnGoBack, btnRefresh;
 
     private Stack prevPath;
     private int curDiskIdx;
     private boolean serverMode = false;
+    private List<FileInfo> serverFolder;
+
     private NeStController parentController;
-    private List<FileInfo> list;
-
-    //private String uploading, downloading;
-    /*public String getUploading() { return uploading; }
-    public void setUploading(String uploading) { this.uploading = uploading; }
-    public String getDownloading() { return downloading; }
-    public void setDownloading(String downloading) { this.downloading = downloading; )
-
-    // источник и приемник (0=клиент/1=сервер) перетаскиваемого (копируемого) файла
-    // определяются по видимости списка выбора дисков (невидим у сервера)
-    private Byte dragSrc, dragDst;*/
 
     public void setController (NeStController controller) {
         parentController = controller;
     }
 
-    public List<FileInfo> getList() { return list; }
-    public void setList(List<FileInfo> list) { this.list = list; }
+    public void setServerFolder(List<FileInfo> serverFolder) { this.serverFolder = serverFolder; }
 
     void updateFreeSpace(long freeSpace) {
         nameLabel.setText("Server files ("+(freeSpace/1000/1000)+"M free)");
@@ -56,7 +44,7 @@ public class PanelController implements Initializable {
         btnLevelUp.setDisable(true);
         btnGoBack.setDisable(true);
         updateFreeSpace(Prefs.MAXSIZE);
-        setCurPath(Prefs.serverURL);
+        setCurPath(Prefs.serverURL.toString());
         if (prevPath != null) prevPath.clear();
         btnGoBack.setDisable(true);
     }
@@ -82,21 +70,23 @@ public class PanelController implements Initializable {
                 filesTable.getItems().addAll(ps.map(FileInfo::new).collect(Collectors.toList()));
             }
             filesTable.sort();
-        }
-        catch (IOException ex) {
-            Alert alert = new Alert(Alert.AlertType.ERROR, "Failed to update list of files.");
-            alert.showAndWait();
+        } catch (IOException ex) {
+            Messages.displayError("Failed to update list of files.", "");
         }
     }
 
     void updateFilesList(String path) {
-        Platform.runLater(() -> {
-            // если выполнять это не в потоке JavaFX,
-            // список на серверной панели будет отображен с дубликатами
-            refreshCurPath(path);
-            filesTable.getItems().clear();
-            if (list != null) filesTable.getItems().addAll(list);
-        });
+        // отображение дубликатов в столбцах -- всего лишь один из частых глюков с TableView,
+        // другой заключается в невозможности доступа к значениям ячеек отображаемых столбцов
+        refreshCurPath(path);
+        filesTable.getItems().clear();
+        if (serverFolder != null)
+            try {
+                filesTable.getItems().addAll(serverFolder);
+                filesTable.sort();
+            } catch (Exception ex) {
+                Messages.displayError("Failed to update list of files.", "");
+            }
     }
 
     @FXML void cmbxChangeDisk(/*ActionEvent ev*/) {
@@ -150,8 +140,15 @@ public class PanelController implements Initializable {
         btnLevelUp.setDisable(atRoot);
     }
 
+    @FXML void btnRefreshAction(/*ActionEvent actionEvent*/) {
+        if (serverMode)
+            parentController.requestFiles(getCurPath());
+        else
+            updateFilesList(Paths.get(getCurPath()));
+    }
+
     String getSelectedFilename() {
-        return filesTable.isFocused()
+        return filesTable.isFocused() && filesTable.getSelectionModel().getSelectedItem() != null
                 ? filesTable.getSelectionModel().getSelectedItem().getFilename()
                 : "";
     }
@@ -165,58 +162,85 @@ public class PanelController implements Initializable {
     void refreshCurPath(String path) {
         curPath.setText(path);
         if (curPath.getTooltip() == null) {
-            if (!(serverMode && path.equals(Prefs.serverURL)) || path.length() > 0)
+            if (!(serverMode && path.equals(Prefs.serverURL.toString())) || path.length() > 0)
                 curPath.setTooltip(new Tooltip(path));
         } else {
-            if ((serverMode && path.equals(Prefs.serverURL)) || path.length() == 0)
+            if ((serverMode && path.equals(Prefs.serverURL.toString())) || path.length() == 0)
                 curPath.setTooltip(null);
             else
                 curPath.getTooltip().setText(path);
         }
     }
 
-    /*byte getOwnerPanel() { return (byte)(disks.isVisible() ? 0 : 1); }
-    public void dragStarted(MouseEvent mouseEvent) {
-        Dragboard db = filesTable.startDragAndDrop(TransferMode.ANY);
-        ClipboardContent content = new ClipboardContent();
-        content.putFiles(Arrays.asList(new File(getSelectedFilename())));
-        if (dragSrc == null) dragSrc = getOwnerPanel();
-        System.out.println("source="+dragSrc+" sel="+getSelectedFilename());
-        db.setContent(content);
-        //mouseEvent.consume();
+    int getCurDisk() { return curDiskIdx; }
+
+    int getColumnByName(String name) {
+        int i = 0;
+        while (i < filesTable.getColumns().size() &&
+               !filesTable.getColumns().get(i).getText().equals(name)) i++;
+        return i < filesTable.getColumns().size() ? i : -1;
     }
 
-    public void dragDropped(DragEvent dragEvent) {
-        Dragboard db = dragEvent.getDragboard();
-        System.out.println("drop: "+db.hasFiles());
-        // dragDst==1: копирование с клиента на сервер
-        if (db.hasFiles()) {
-            dragDst = getOwnerPanel();
-            if (dragDst == 0)
-                setDownloading(db.getFiles().get(0).toString());
-            else
-                setUploading(db.getFiles().get(0).toString());
-            System.out.println("source="+dragSrc+" target=" + dragDst);
-            System.out.println("Dropped: " + db.getFiles().get(0));
-            dragSrc = null;
+    /**
+     * методы обработки выбранного элемента списка
+     *
+     * 1. активация - нажатие Enter или двойной щелчок
+     */
+    void processItem() {
+        if (filesTable.getSelectionModel().getSelectedItem() != null) {
+            Path p = Paths.get(getCurPath(), filesTable.getSelectionModel().getSelectedItem().getFilename());
+            boolean isFolder = false;
+            if (serverMode) {
+                int i = getColumnByName("Size");
+                if (i >= 0) {
+                    TableColumn<FileInfo, Long> fileSizeColumn =
+                            (TableColumn<FileInfo, Long>)filesTable.getColumns().get(i);
+                    isFolder = fileSizeColumn.getCellData(
+                            filesTable.getSelectionModel().getSelectedIndex()).intValue() < 0;
+                    if (isFolder)
+                        parentController.requestFiles(p.toString());
+                }
+            } else {
+                isFolder = Files.isDirectory(p);
+                if (isFolder) updateFilesList(p);
+            }
+            if (isFolder) {
+                pushCurrentPath();
+                btnLevelUp.setDisable(false);
+            }
         }
-        dragEvent.setDropCompleted(db.hasFiles());
-        dragEvent.consume();
     }
 
-    public void dragOver(DragEvent dragEvent) {
-        byte dragOver = getOwnerPanel();
-        boolean hasFiles = dragEvent.getDragboard().hasFiles();
-        System.out.println("over: src="+dragSrc+" dst="+dragOver+" sel="+getSelectedFilename()+
-                " files="+hasFiles+"->"+(hasFiles ? dragEvent.getDragboard().getFiles().get(0).toString() : ""));
-        // когда перемещение происходит над приемником dragSrc=null (поскольку ранее активировался его dragStarted(),
-        // имя выбранного файла пусто
-        if (dragEvent.getDragboard().hasFiles() && dragSrc == null) {
-            //System.out.println(dragEvent.getGestureSource().toString());
-            dragEvent.acceptTransferModes(TransferMode.ANY);
+    /**
+     * 2. удаление (по нажатию Delete):
+     *    данный метод удаляет файл (папку) только на клиенте
+     *    и вызывается не напрямую, а из метода родительского
+     *    контроллера tryRemove - пояснение см. в его описании
+     */
+    void removeItem() {
+        try {
+            Files.delete(Paths.get(getCurPath(), getSelectedFilename()));
+            Messages.displayInfo(getSelectedFilename() + " removed successfully", "Removal completed");
+            updateFilesList(Paths.get(getCurPath()));
+        } catch (IOException ex) {
+            int errCode = Prefs.ERR_NO_SUCH_FILE;
+            if (ex instanceof DirectoryNotEmptyException) errCode = Prefs.ERR_NOT_EMPTY;
+            Messages.displayError(Prefs.errMessage[errCode], Prefs.ERR_CANNOT_REMOVE);
         }
-        dragEvent.consume();
-    }*/
+    }
+
+    @FXML void keyboardHandler(KeyEvent ev) {
+        if (filesTable.getSelectionModel().getSelectedIndex() >= 0) {
+            switch (ev.getCode()) {
+                case DELETE: parentController.tryRemove(); break;
+                case ENTER: processItem();
+            }
+        }
+    }
+
+    @FXML void mouseHandler(MouseEvent ev) {
+        if (ev.getClickCount() == 2) processItem();
+    }
 
     /*
         Урок 3. Фреймворк Netty
@@ -235,9 +259,7 @@ public class PanelController implements Initializable {
         что и требовалось в задании
      */
     @Override public void initialize(URL url, ResourceBundle resourceBundle) {
-        btnLevelUp.setTooltip(new Tooltip("На уровень вверх"));
-        btnGoBack.setTooltip(new Tooltip("Вернуться назад"));
-
+        filesTable.setPlaceholder(new Label("< The folder is empty >"));
         TableColumn<FileInfo, String> fileNameColumn = new TableColumn<>("Name");
         TableColumn<FileInfo, Long> fileSizeColumn = new TableColumn<>("Size");
         TableColumn<FileInfo, String> fileDateColumn = new TableColumn<>("Date");
@@ -273,28 +295,6 @@ public class PanelController implements Initializable {
 
         filesTable.getColumns().addAll(fileNameColumn, fileSizeColumn, fileDateColumn);
         filesTable.getSortOrder().add(fileSizeColumn);
-        filesTable.setOnMouseClicked(ev -> {
-            if (ev.getClickCount() == 2) {
-                Path p;
-                boolean isFolder;
-                if (serverMode) {
-                    int i = filesTable.getSelectionModel().getSelectedIndex();
-                    p = Paths.get(getCurPath()).resolve(fileNameColumn.getCellData(i));
-                    isFolder = fileSizeColumn.getCellData(i).intValue() < 0;
-                    if (isFolder)
-                        parentController.requestFiles(p.toString());
-                } else {
-                    p = Paths.get(getCurPath())
-                            .resolve(filesTable.getSelectionModel().getSelectedItem().getFilename());
-                    isFolder = Files.isDirectory(p);
-                    if (isFolder) updateFilesList(p);
-                }
-                if (isFolder) {
-                    pushCurrentPath();
-                    btnLevelUp.setDisable(false);
-                }
-            }
-        });
 
         updateFilesList(startPath);
     }
