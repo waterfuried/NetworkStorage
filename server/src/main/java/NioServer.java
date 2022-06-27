@@ -1,3 +1,12 @@
+/*
+  Урок 2. Java NIO
+  1. Реализовать сервер на NIO, поддерживающие команды ls, cat, cd, способный работать через telnet.
+  Проще говоря, реализовать простую версию линуксового терминала.
+  ls - список файлов в текущей директории на сервере
+  cat file - вывести на экран содержание файла с именем в текущей директории
+  cd path - перейти в папку с именем
+  Внимательно с исключениями, клиент должен понимать что не так если произошла ошибка
+*/
 import prefs.Prefs;
 
 import java.io.IOException;
@@ -10,8 +19,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 
 import java.util.Iterator;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
+import java.util.stream.*;
 
 public class NioServer {
     private final ServerSocketChannel server; // канал серверного сокета
@@ -30,7 +38,7 @@ public class NioServer {
         server.configureBlocking(false);
         // регистрация канала с выбранным селектором на принятие соединений
         server.register(selector, SelectionKey.OP_ACCEPT);
-        curPath = Paths.get(Prefs.serverURL);
+        curPath = Prefs.serverURL;
     }
 
     public void start() {
@@ -42,7 +50,6 @@ public class NioServer {
             Iterator<SelectionKey> iterator = selector.selectedKeys().iterator();
             // пока есть ключи выбора
             while (iterator.hasNext()) {
-            // обработать множество ключей выбора селектора (может быть пустое)
                 SelectionKey key = iterator.next();
                 // обработать ключ на принятие входящего соединения
                 if (key.isAcceptable()) handleAccept();
@@ -58,10 +65,9 @@ public class NioServer {
 
     // обработчик чтения из входящего соединения
     private void handleRead(SelectionKey key) {
-        // буфер очищается GC автоматически - нет необходимости
+        // буфер удаляется GC автоматически - нет необходимости
         // (как и возможности) его ручного освобождения
         ByteBuffer buf = ByteBuffer.allocate(Prefs.BUF_SIZE);
-        buf.clear();
         // ссылка на канал (серверного) сокета
         SocketChannel channel = (SocketChannel)key.channel();
 
@@ -91,30 +97,35 @@ public class NioServer {
         }
 
         String[] cmd = s.toString().trim().toLowerCase().split(" +");
+        final String changedTo = "current folder has been changed to ";
         String response = "";
         switch (cmd[0]) {
             case Prefs.COM_TERM_CD:
-                if (cmd.length == 2) {
-                    //TODO: если аргумент имеет значения вида /.. или /../.. или a/../b/../.. и т.п.,
-                    // это может быть попыткой выйти выше корня
-                    Path rootPath = Paths.get(Prefs.serverURL);
-                    /*if (cmd[1].startsWith("/") || cmd[1].startsWith("\\") && !curPath.equals(rootPath))
-                        curPath = ?;*/
-                    if (curPath.equals(rootPath)
-                        && cmd[1].startsWith("..") || cmd[1].startsWith("/..") || cmd[1].startsWith("\\..")) {
-                        response = "wrong path: "+cmd[1];
+                if (cmd.length == 2)
+                    // переход в корневую папку пользователя обработать отдельно
+                    // альтернативы: File.separator и FileSystems.getDefault().getSeparator()
+                    if (cmd[1].equals(System.getProperty("file.separator"))) {
+                        if (Prefs.isRootPath(curPath))
+                            response = "already at root folder";
+                        else {
+                            curPath = Prefs.getRootPath();
+                            response = changedTo + "root";
+                        }
                     } else {
-                        Path dst = curPath.resolve(cmd[1]);
-                        if (Files.exists(dst))
-                            if (Files.isDirectory(dst)) {
-                                curPath = dst;
-                                response = "current folder has been changed to "+cmd[1];
-                            } else
-                                response = cmd[1]+" is not a folder";
-                        else
-                            response = "folder "+cmd[1]+" does not exist";
+                        Path dst = curPath.resolve(cmd[1]).normalize();
+                        if (Prefs.isValidPath(dst)) {
+                            if (Files.exists(dst))
+                                if (Files.isDirectory(dst)) {
+                                    curPath = dst.normalize();
+                                    response = changedTo + cmd[1];
+                                } else
+                                    response = cmd[1] + " is not a folder";
+                            else
+                                response = "folder " + cmd[1] + " does not exist";
+                        } else
+                            response = "wrong path: " + cmd[1];
                     }
-                } else
+                else
                     response = Prefs.getCmdHelp(1);
                 break;
             case Prefs.COM_TERM_LIST:
@@ -138,9 +149,13 @@ public class NioServer {
                         } catch (IOException ex) {
                             System.err.println(ex.getMessage());
                         }
-                    }
+                    } else
+                        response = "unable to display "+cmd[1];
                 } else
                     response = Prefs.getCmdHelp(0);
+                break;
+            case Prefs.COM_TERM_HELP:
+                response = Prefs.getHelp();
                 break;
             case Prefs.COM_QUIT:
             case Prefs.COM_EXIT:

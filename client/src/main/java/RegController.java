@@ -15,7 +15,6 @@ public class RegController implements Initializable {
     @FXML PasswordField passwordField;
     @FXML TextArea textArea;
     @FXML Button btnReg;
-
     private NeStController controller;
 
     void setController (NeStController controller) {
@@ -44,6 +43,13 @@ public class RegController implements Initializable {
         });
     }
 
+    // TODO: разделять авторизацию и регистрацию (2 вида запросов) -
+    //  при первой вводятся логин и пароль,
+    //  при второй - также данные пользователя, например, ФИО и email
+    //
+    //  если при авторизации пользователя в базе он не найден,
+    //  то может зарегистрироваться - для этого должны отображаться
+    //  поля ввода дополнительных данных (см. выше)
     @FXML public void register(/*ActionEvent actionEvent*/) {
         if (!controller.authorized) {
             String login = loginField.getText().trim();

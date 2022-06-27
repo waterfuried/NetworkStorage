@@ -1,8 +1,8 @@
 package prefs;
 
-import java.nio.file.Paths;
-import java.util.ArrayList;
-import java.util.List;
+import java.nio.file.*;
+import java.time.format.DateTimeFormatter;
+import java.util.*;
 
 public class Prefs {
     public static final int PORT = 8189; // порт подключения
@@ -37,12 +37,10 @@ public class Prefs {
     public static final String COM_TERM_CAT = "cat";
     public static final String COM_TERM_CD = "cd";
     public static final String COM_TERM_LIST = "ls";
+    public static final String COM_TERM_HELP = "help";
     public static final String[] COM_TERM_USAGE = {
             "filename", // cat
-            "folder_name", // cd
-            null, //ls
-            null, //exit
-            null //quit
+            "folder_name" // cd
     };
 
     // ответы сервера на запросы
@@ -50,21 +48,29 @@ public class Prefs {
     public static final int SRV_SUCCESS = 0; // выполнено успешно
 
     public static final String SRV_REFUSE = "NEST_ERR";
+    public static final String ERR_CANNOT_REMOVE = "Cannot remove";
     public static final int ERR_WRONG_AUTH = 0;
     public static final int ERR_NO_SUCH_FILE = 1;
     public static final int ERR_OUT_OF_SPACE = 2;
     public static final int ERR_CANNOT_COMPLETE = 3;
+    public static final int ERR_WRONG_LIST = 4;
+    public static final int ERR_NOT_EMPTY = 5;
     public static final String[] errMessage = {
             "Authorization error",
             "No such file or folder",
             "Out of free space",
-            "Cannot copy selected"
+            "Cannot copy selected",
+            "Failed to get list of entries",
+            "Folder is not empty"
     };
 
     // папка для имитации сетевого адреса сервера
-    // рекурсивное вычисление размера домашней папки (~14Гб, ~80K файлов) вызывает переполнение стека
-    // особенно ее AppData
-    public static final String serverURL = Paths.get("temp").normalize().toAbsolutePath().toString();//System.getProperty("user.home");
+    // System.getProperty("user.home") рекурсивное вычисление размера домашней папки (~14Гб, ~80K файлов)
+    // вызывает переполнение стека
+    public static final Path serverURL = Paths.get("temp").normalize().toAbsolutePath();
+
+    // используемый шаблон времени/даты
+    public static final DateTimeFormatter dtFmt = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     // приглашение ввода в текстовом терминале
     public static final String terminalPrompt = ">> ";
@@ -73,7 +79,9 @@ public class Prefs {
         if (args == null || args.length == 0) return COM_ID + cmdName;
 
         StringBuilder sb = new StringBuilder(COM_ID + cmdName);
-        for (String s : args) sb.append(" ").append(s);
+        for (String s : args)
+            //TODO: некоторые аргументы, например, имена файлов и папок могут содержать пробелы
+            if (s.length() > 0) sb.append(" ").append(s);
         return sb.toString();
     }
 
@@ -114,7 +122,23 @@ public class Prefs {
                 "\n\r\t" + getCmdHelp(0, false) +
                 "\n\r\t" + getCmdHelp(1, false) +
                 "\n\r\t" + COM_TERM_LIST +
+                "\n\r\t" + COM_TERM_HELP +
                 "\n\r\t" + COM_QUIT +
                 "\n\r\t" + COM_EXIT;
+    }
+
+    public static boolean isValidPath(Path path) {
+        return !Prefs.serverURL.relativize(path).toString().startsWith("..");
+    }
+
+    public static boolean isRootPath(Path path) {
+        return Prefs.serverURL.equals(path.normalize());
+    }
+
+    public static Path getRootPath() { return serverURL; }
+
+    public static String capitalize(String s) {
+        if (s == null || s.trim().length() == 0) return s;
+        return s.substring(0, 1).toUpperCase()+s.substring(1);
     }
 }

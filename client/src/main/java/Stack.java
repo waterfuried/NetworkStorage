@@ -21,20 +21,20 @@ public class Stack {
 
     public void push(String val) {
         if (isFull()) {
-            maxSize *= 2;
-            String[] newStack = new String[maxSize];
+            String[] newStack = new String[maxSize<<=1];
             System.arraycopy(stack, 0, newStack, 0, stack.length);
             stack = newStack;
         }
         stack[++head] = val;
     }
 
-    public String pop() {
-        if (isEmpty()) throw new RuntimeException("Stack is empty"); //ret -1
+    public String pop() throws EmptyStackException {
+        if (isEmpty()) throw new EmptyStackException();
         return stack[head--];
     }
 
-    public String peek() {
+    public String peek() throws EmptyStackException {
+        if (isEmpty()) throw new EmptyStackException();
         return stack[head];
     }
 }

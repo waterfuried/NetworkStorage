@@ -2,9 +2,9 @@
 
 <?import javafx.scene.control.*?>
 <?import javafx.scene.layout.*?>
-<?import javafx.scene.text.*?>
+<?import javafx.scene.text.Font?>
 
-<VBox xmlns="http://javafx.com/javafx/16" xmlns:fx="http://javafx.com/fxml/1" fx:controller="PanelController">
+<VBox xmlns="http://javafx.com/javafx/18" xmlns:fx="http://javafx.com/fxml/1" fx:controller="PanelController">
 <!--
 если оставить эти свойства (по умолчанию),
 изменение размеров окна не будет влиять на размеры внутренних контейнеров;
@@ -20,10 +20,18 @@ maxHeight="-Infinity" maxWidth="-Infinity" minHeight="-Infinity" minWidth="-Infi
         </VBox>
         <ComboBox fx:id="disks" onAction="#cmbxChangeDisk" />
         <TextField fx:id="curPath" editable="false" HBox.hgrow="ALWAYS" />
-        <Button fx:id="btnLevelUp" onAction="#btnLevelUpAction" text=".." />
-        <Button fx:id="btnGoBack" disable="true" onAction="#btnGoBackAction" text="←" />
+        <Button fx:id="btnLevelUp" onAction="#btnLevelUpAction" text="..">
+         <tooltip><Tooltip text="На уровень вверх" />
+         </tooltip>
+        </Button>
+        <Button fx:id="btnGoBack" disable="true" onAction="#btnGoBackAction" text="←">
+         <tooltip><Tooltip text="Вернуться назад" /></tooltip>
+        </Button>
+        <Button fx:id="btnRefresh" onAction="#btnRefreshAction" text="⟳">
+         <tooltip><Tooltip text="Обновить" /></tooltip>
+        </Button>
     </HBox>
-    <TableView fx:id="filesTable" VBox.vgrow="ALWAYS" />
+    <TableView fx:id="filesTable" VBox.vgrow="ALWAYS" onKeyReleased="#keyboardHandler" onMouseClicked="#mouseHandler" />
     <properties>
         <ctrlRef><fx:reference source="controller"/></ctrlRef>
     </properties>
