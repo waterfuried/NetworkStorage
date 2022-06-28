@@ -7,16 +7,16 @@ import java.io.File;
 import java.nio.file.Path;
 
 /**
- * ответ на запрос авторизации
+ * ответ на запрос регистрации
  * возвращает:
  * имя пользователя, если он зарегистрирован
  * null - в противном случае
  */
-public class AuthResponse implements CloudMessage {
+public class RegResponse implements CloudMessage {
     private final String username;
     private int errCode;
 
-    public AuthResponse(String username, Path userFolder) {
+    public RegResponse(String username, Path userFolder) {
         this.username = username;
         errCode = -1;
         if (username != null) {
@@ -30,8 +30,8 @@ public class AuthResponse implements CloudMessage {
             }
             if (!b) errCode = Prefs.ErrorCode.ERR_INTERNAL_ERROR.ordinal();
         }
-            else
-                errCode = Prefs.ErrorCode.ERR_WRONG_AUTH.ordinal();
+        else
+            errCode = Prefs.ErrorCode.ERR_WRONG_REG.ordinal();
     }
 
     public String getUsername() { return username; }

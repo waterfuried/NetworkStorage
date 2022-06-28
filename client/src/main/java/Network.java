@@ -3,11 +3,12 @@ import java.io.*;
 import java.net.Socket;
 
 public class Network {
+    private final Socket socket;
     private DataInputStream is;
     private DataOutputStream os;
 
     public Network(int port) throws IOException {
-        Socket socket = new Socket("localhost", port);
+        socket = new Socket("localhost", port);
         is = new DataInputStream(socket.getInputStream());
         os = new DataOutputStream(socket.getOutputStream());
     }
@@ -25,5 +26,10 @@ public class Network {
     public void write(String message) throws IOException {
         os.writeUTF(message);
         os.flush();
+    }
+
+    public void close() {
+        try { if (socket != null) socket.close(); }
+        catch (IOException ex) { ex.printStackTrace();}
     }
 }

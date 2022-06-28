@@ -33,8 +33,8 @@ public class Messages {
         displayMessage(Alert.AlertType.ERROR, errMsg, title);
     }
 
-    static void displayError(int errCode, String title) {
-        displayMessage(Alert.AlertType.ERROR, Prefs.errMessage[errCode], title);
+    static void displayError(Prefs.ErrorCode errCode, String title) {
+        displayMessage(Alert.AlertType.ERROR, Prefs.errMessage[errCode.ordinal()], title);
     }
 
     static void displayErrorFX(String errMsg, String title) {

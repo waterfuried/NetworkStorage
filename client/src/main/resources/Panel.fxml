@@ -21,14 +21,13 @@ maxHeight="-Infinity" maxWidth="-Infinity" minHeight="-Infinity" minWidth="-Infi
         <ComboBox fx:id="disks" onAction="#cmbxChangeDisk" />
         <TextField fx:id="curPath" editable="false" HBox.hgrow="ALWAYS" />
         <Button fx:id="btnLevelUp" onAction="#btnLevelUpAction" text="..">
-         <tooltip><Tooltip text="На уровень вверх" />
-         </tooltip>
+         <tooltip><Tooltip text="One level up" /></tooltip>
         </Button>
         <Button fx:id="btnGoBack" disable="true" onAction="#btnGoBackAction" text="←">
-         <tooltip><Tooltip text="Вернуться назад" /></tooltip>
+         <tooltip><Tooltip text="Go back" /></tooltip>
         </Button>
         <Button fx:id="btnRefresh" onAction="#btnRefreshAction" text="⟳">
-         <tooltip><Tooltip text="Обновить" /></tooltip>
+         <tooltip><Tooltip text="Refresh" /></tooltip>
         </Button>
     </HBox>
     <TableView fx:id="filesTable" VBox.vgrow="ALWAYS" onKeyReleased="#keyboardHandler" onMouseClicked="#mouseHandler" />
