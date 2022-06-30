@@ -1,5 +1,6 @@
 package prefs;
 
+import java.io.*;
 import java.nio.file.*;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
@@ -30,8 +31,11 @@ public class Prefs {
 
     public static final String COM_UPLOAD = "upload";
     public static final String COM_DOWNLOAD = "download";
-
     public static final String COM_REMOVE = "remove";
+    //public static final String COM_RENAME = "rename";
+
+    public static final String COM_OPTION_OVERWRITE = "overwrite";
+//    public static final String COM_OPTION_SKIP = "skip";
 
     // команды терминала
     public static final String COM_TERM_CAT = "cat";
@@ -49,6 +53,7 @@ public class Prefs {
 
     public static final String SRV_REFUSE = "NEST_ERR";
     public static final String ERR_CANNOT_REMOVE = "Cannot remove";
+    public static final int CONFIRM_OVERWRITE = 10_000;
 
     public enum ErrorCode {
         ERR_WRONG_AUTH,
@@ -58,7 +63,8 @@ public class Prefs {
         ERR_WRONG_LIST,
         ERR_NOT_EMPTY,
         ERR_INTERNAL_ERROR,
-        ERR_WRONG_REG
+        ERR_WRONG_REG,
+        ERR_DB_OVERFLOW
     }
     public static final String[] errMessage = {
             "Authorization error",
@@ -67,8 +73,9 @@ public class Prefs {
             "Cannot copy selected",
             "Failed to get list of entries",
             "Folder is not empty",
-            "Internal server error.\nTry to repeat operation later",
-            "Registration error"
+            "Internal server error;\ntry to repeat operation later",
+            "Registration error",
+            "Number of users already at maximum, please inform administrator"
     };
 
     // папка для имитации сетевого адреса сервера
@@ -151,8 +158,10 @@ public class Prefs {
         return s.substring(0, 1).toUpperCase()+s.substring(1);
     }
 
-    //TODO: имена файлов и папок могут содержать пробелы
-    // заменять и восстанавливать пробелы в именах файлов при их копировании и удалении
+    // поскольку в текстовом протоколе аргументы команд разделяются пробелами,
+    // а имена файлов и папок также могут содержать пробелы, последние необходимо
+    // заменять и восстанавливать при передаче имен файлов в качестве аргументов
+    // тех команд, где они используются, например, копирования и удаления
     public static String encodeSpaces(String s) {
         if (s == null || s.trim().length() == 0 || !s.contains(" ")) return s;
         return s.replace(" ", "\"");
@@ -160,5 +169,20 @@ public class Prefs {
     public static String decodeSpaces(String s) {
         if (s == null || s.trim().length() == 0 || !s.contains("\"")) return s;
         return s.replace("\"", " ");
+    }
+
+    public static boolean isValidOption(String option) {
+        return option.equalsIgnoreCase(COM_OPTION_OVERWRITE);
+    }
+
+    public static void doCopying(String src, String dst) {
+        byte[] buf = new byte[BUF_SIZE];
+        try (BufferedInputStream bis = new BufferedInputStream(
+                new FileInputStream(src), BUF_SIZE);
+             BufferedOutputStream bos = new BufferedOutputStream(
+                     new FileOutputStream(dst), BUF_SIZE)) {
+            int bytesRead;
+            while ((bytesRead = bis.read(buf)) >= 0) bos.write(buf, 0, bytesRead);
+        } catch (Exception ex) { ex.printStackTrace(); }
     }
 }

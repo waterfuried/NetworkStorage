@@ -33,7 +33,6 @@ public class CloudFileHandler extends SimpleChannelInboundHandler<CloudMessage> 
 
     public void setUserFolder(String folder) { this.userFolder = Prefs.serverURL.resolve(folder); }
 
-
     public CloudFileHandler(AuthService dbs) {
         DBService = dbs;
     }
@@ -58,16 +57,22 @@ public class CloudFileHandler extends SimpleChannelInboundHandler<CloudMessage> 
                     newUser = userdata[0];
                     setUserFolder("user" + userdata[1]);
                     freeSpace = new SpaceResponse(userFolder).getSpace();
-                }
+                } else
+                    newUser = null;
             }
-            ctx.writeAndFlush(new AuthResponse(newUser, userFolder));
+            AuthResponse r = new AuthResponse(newUser, userFolder);
+            ctx.writeAndFlush(r);
+            if (newUser != null && r.getErrCode() < 0) {
+                ctx.writeAndFlush(new SpaceResponse(freeSpace));
+                ctx.writeAndFlush(new FilesListResponse("", userFolder));
+            }
         }
         if (cloudMessage instanceof RegRequest) {
             RegRequest reg = (RegRequest)cloudMessage;
             System.out.println("registration request: login="+reg.getLogin()
                     +" pwd="+reg.getPassword()
                     +" email="+reg.getEmail()
-                    +"username="+reg.getUsername());
+                    +" username="+reg.getUsername());
             int number = 0;
             String newUser = reg.getPassword().length() < Prefs.MIN_PWD_LEN
                     ? null
@@ -76,9 +81,14 @@ public class CloudFileHandler extends SimpleChannelInboundHandler<CloudMessage> 
                         ? reg.getUsername() : null;
             if (newUser != null) {
                 setUserFolder("user" + number);
-                freeSpace = new SpaceResponse(userFolder).getSpace();
+                freeSpace = Prefs.MAXSIZE;
             }
-            ctx.writeAndFlush(new RegResponse(newUser, userFolder));
+            RegResponse r = new RegResponse(newUser, number, userFolder);
+            ctx.writeAndFlush(r);
+            if (newUser != null && r.getErrCode() < 0) {
+                ctx.writeAndFlush(new SpaceResponse(freeSpace));
+                ctx.writeAndFlush(new FilesListResponse("", userFolder));
+            }
         }
         // запрос завершения сеанса пользователя
         if (cloudMessage instanceof LogoutRequest) {
@@ -107,13 +117,18 @@ public class CloudFileHandler extends SimpleChannelInboundHandler<CloudMessage> 
                     "\n"+upload.getSrcPath()+
                     "\n"+upload.getDstPath()+
                     "\n"+upload.getSize()+
-                    "\n"+upload.getModified());
+                    "\n"+upload.getModified()+
+                    "\n"+upload.mustOverwrite());
             UploadResponse r =
                     new UploadResponse(upload.getSrcPath(), upload.getDstPath(),
-                            upload.getSize(), upload.getModified(), freeSpace, userFolder);
-            if (r.getErrCode() < 0 && upload.getSize() > 0)
-                freeSpace -= upload.getSize();
+                            upload.getSize(), upload.getModified(), upload.mustOverwrite(),
+                            freeSpace, userFolder);
             ctx.writeAndFlush(r);
+            if (r.getErrCode() < 0) {
+                if (r.getErrCode() < 0 && upload.getSize() > 0) freeSpace -= upload.getSize()-r.getOldSize();
+                ctx.writeAndFlush(new SpaceResponse(freeSpace));
+                ctx.writeAndFlush(new FilesListResponse(upload.getDstPath(), userFolder));
+            }
         }
         // запрос копирования файла/папки с сервера на клиент
         if (cloudMessage instanceof DownloadRequest) {
@@ -134,8 +149,13 @@ public class CloudFileHandler extends SimpleChannelInboundHandler<CloudMessage> 
             try { freed = Files.size(userFolder.resolve(rm.getPath())); }
             catch (IOException ex) { ex.printStackTrace(); }
             RemovalResponse r = new RemovalResponse(rm.getPath(), userFolder);
-            if (r.getErrCode() < 0) freeSpace += freed;
             ctx.writeAndFlush(r);
+            if (r.getErrCode() < 0) {
+                freeSpace += freed;
+                ctx.writeAndFlush(new SpaceResponse(freeSpace));
+                int i = rm.getPath().lastIndexOf(File.separatorChar);
+                ctx.writeAndFlush(new FilesListResponse(i < 0 ? "" : rm.getPath().substring(0, i), userFolder));
+            }
         }
     }
 }

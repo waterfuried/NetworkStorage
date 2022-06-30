@@ -60,7 +60,7 @@
         /space,
        размер в байтах возвращается в значении доп. кода.
     5. залить файл/папку с клиента на сервер:
-        /upload путь-с-именем-файла/папки-на-компьютере-клиента путь-на-сервере размер [дата]
+        /upload путь-с-именем-файла/папки-на-компьютере-клиента путь-на-сервере размер [дата] [overwrite]
     6. скачать файл/папку с сервера на клиент:
         /download путь-с-именем-файла/папки-на-сервере путь-на-компьютере-клиента размер [дата]
     7. удалить файл/папку на сервере:
@@ -72,9 +72,6 @@
        после доп. кода 0 возвращается имя пользователя, если он зарегистрирован
     9. TODO: переименование файла/папки
 
-    TODO: команды №№5,6,7,9 - в ФС семейств FAT и NTFS регистр символов в именах файлов не важен,
-          в ФС, используемых семейством ОС Unix - ext, ext2, ext3...  - он имеет значение
-
     команды 5 и 6
     - работают по принципу "1 за раз" - например,
       при заливке папки на сервер (размер указывается как -1)
@@ -84,6 +81,8 @@
       датой модификации файла/папки (необязательной) -
       если она не указана, файл/папка будет скопирован
       с текущими датой и временем.
+    - если копируемый на сервер уже существует, сервер
+      отправляет запрос подтверждения его замены новым
     > если папка содержит несколько подпапок и/или файлов,
       перед заливкой ее на сервер нужно убедиться в наличии
       достаточного свободного места.
@@ -111,6 +110,7 @@ import java.io.*;
 import java.net.URL;
 import java.nio.file.*;
 import java.util.*;
+import java.util.logging.Level;
 
 public class NeStController implements Initializable {
     @FXML VBox clientView, serverView;
@@ -210,11 +210,18 @@ public class NeStController implements Initializable {
                         }
                         // обработать ошибки при выполнении команд/запросов
                         if (cmd.startsWith(Prefs.getCommand(Prefs.SRV_REFUSE))) {
-                            String[] response = cmd.split(" ", 3);
+                            String[] response = cmd.split(" ", 4);
                             int errCode;
                             try { errCode = Integer.parseInt(response[1]); }
                             catch (Exception ex) { errCode = Prefs.ErrorCode.ERR_INTERNAL_ERROR.ordinal(); }
-                            onFailed(response.length == 3 ? response[2] : "", errCode);
+                            if (errCode == Prefs.CONFIRM_OVERWRITE)
+                                Platform.runLater(() -> {
+                                    if (getReplaceConfirmation(response[3].equals("1"),
+                                            Prefs.decodeSpaces(response[2])))
+                                        upload(true);
+                                });
+                            else
+                                onFailed(response.length == 3 ? response[2] : "", errCode);
                         }
                     }
                 }
@@ -232,16 +239,19 @@ public class NeStController implements Initializable {
                 if (message instanceof AuthResponse) {
                     AuthResponse auth = (AuthResponse)message;
                     System.out.println("authorization, server return "+auth.getUsername());
-                    if ((user = auth.getUsername()) != null)
+                    user = auth.getUsername();
+                    if (user != null && user.length() > 0 && auth.getErrCode() < 0)
                         doLogInActions();
-                    else
+                    else {
+                        user = null;
                         onLoginFailed(auth.getErrCode());
+                    }
                 }
                 // запрос регистрации
                 if (message instanceof RegResponse) {
                     RegResponse reg = (RegResponse)message;
                     System.out.println("registration, server return "+reg.getUsername());
-                    if ((user = reg.getUsername()) != null)
+                    if ((user = reg.getUsername()) != null && reg.getErrCode() < 0)
                         doLogInActions();
                     else
                         onLoginFailed(reg.getErrCode());
@@ -315,7 +325,13 @@ public class NeStController implements Initializable {
                     if (upload.getErrCode() < 0)
                         onUploaded();
                     else
-                        onFailed(Prefs.COM_UPLOAD, upload.getErrCode());
+                        if (upload.getErrCode() == Prefs.CONFIRM_OVERWRITE)
+                            Platform.runLater(() -> {
+                                if (getReplaceConfirmation(upload.isFile(), upload.getEntry()))
+                                    upload(true);
+                        });
+                        else
+                            onFailed(Prefs.COM_UPLOAD, upload.getErrCode());
                 }
                 // запрос копирования с сервера на клиент
                 if (message instanceof DownloadResponse) {
@@ -411,6 +427,11 @@ public class NeStController implements Initializable {
     }
 
     // проверка существования файла/папки в текущей папке на сервере/клиенте
+    // NB: в ФС семейств FAT и NTFS регистр символов в именах файлов не важен,
+    //     в ФС, используемых семейством ОС Unix - ext, ext2, ext3...  - он имеет значение
+    //     поэтому не всегда есть гарантия, что выбранный в одном списке файл
+    //     отстуствует и в другом - в случае, например, файлов ABC.txt и abc.txt
+    //     по возможности, наличие файла нужно проверять локально, используя сервис ФС
     int checkPresence(boolean atServer) {
         List<FileInfo> list = (atServer ? srvCtrl : cliCtrl).filesTable.getItems();
         if (list != null && list.size() > 0) {
@@ -424,6 +445,13 @@ public class NeStController implements Initializable {
             }
             if (present)
                 return isFile ? 0 : 1;
+            else
+                if (!atServer) {
+                    Path p = Paths.get(cliCtrl.getCurPath(), srvCtrl.getSelectedFilename());
+                    System.out.println(Files.exists(p)+" "+!Files.isDirectory(p));
+                    if (Files.exists(p))
+                        return Files.isDirectory(p) ? 1 : 0;
+                }
         }
         return -1;
     }
@@ -435,18 +463,17 @@ public class NeStController implements Initializable {
     @FXML void tryUpload() {
         int entryType = checkPresence(true);
         if (entryType < 0)
-            upload();
+            upload(false);
         else {
-            String entry = entryType == 0 ? "File" : "Folder";
             String name = cliCtrl.filesTable.getSelectionModel().getSelectedItem().getFilename();
             Platform.runLater(() -> {
-                if (getReplaceConfirmation(entry, name)) upload();
+                if (getReplaceConfirmation(entryType == 0, name)) upload(true);
             });
         }
     }
 
     // отправка запроса
-    private void upload() {
+    private void upload(boolean replace) {
         System.out.println("requesting upload");
         // /upload source_path destination_path size [date]
         //TODO: при копировании больших файлов следовало бы отображать индикатор копирования
@@ -455,11 +482,11 @@ public class NeStController implements Initializable {
         FileInfo fi = cliCtrl.filesTable.getSelectionModel().getSelectedItem();
         if (useNetty)
             sendCmdOrRequestNetty(new UploadRequest(cliCtrl.getFullSelectedFilename(),
-                    dst, fi.getSize(), fi.getModifiedAsLong()));
+                    dst, fi.getSize(), fi.getModifiedAsLong(), replace));
         else
             sendCmdOrRequest(Prefs.getCommand(Prefs.COM_UPLOAD,
                     Prefs.encodeSpaces(cliCtrl.getFullSelectedFilename()),
-                    dst, fi.getSize()+"", fi.getModifiedAsLong()+""));
+                    dst, fi.getSize()+"", fi.getModifiedAsLong()+"", (replace ? Prefs.COM_OPTION_OVERWRITE : "")));
     }
 
     // запрос на копирование файла/папки с сервера
@@ -471,10 +498,9 @@ public class NeStController implements Initializable {
         if (entryType < 0)
             download();
         else {
-            String entry = entryType == 0 ? "File" : "Folder";
             String name = srvCtrl.filesTable.getSelectionModel().getSelectedItem().getFilename();
             Platform.runLater(() -> {
-                if (getReplaceConfirmation(entry, name)) download();
+                if (getReplaceConfirmation(entryType == 0, name)) download();
             });
         }
     }
@@ -533,8 +559,7 @@ public class NeStController implements Initializable {
                         Files.copy(Paths.get((client ? srvCtrl : cliCtrl).getCurPath(), db.getString()), dst);
                     } catch (Exception ex) {
                         retry = ex instanceof FileAlreadyExistsException
-                                ? getReplaceConfirmation(Files.isRegularFile(dst) ? "File" : "Folder",
-                                db.getString())
+                                ? getReplaceConfirmation(Files.isRegularFile(dst), db.getString())
                                 : Messages.getConfirmation(Alert.AlertType.ERROR,
                                 "Copy error has been occurred.\nWould you like to retry?",
                                 "Copy error");
@@ -604,10 +629,6 @@ public class NeStController implements Initializable {
             menuItemLogIn.setDisable(true);
             menuItemLogOut.setDisable(false);
         });
-        // сразу после авторизации запросить у сервера список файлов
-        // из папки пользователя и размер оставшегося в ней свободного места
-        requestFiles("");
-        requestFreeSpace();
     }
 
     void onLoginFailed(int errCode) {
@@ -633,8 +654,6 @@ public class NeStController implements Initializable {
     void onUploaded() {
         // обновить список файлов сервера после успешной передачи
         Platform.runLater(() -> Messages.displayInfo("Uploaded successfully", "Uploading completed"));
-        requestFiles(srvCtrl.getCurPath());
-        requestFreeSpace();
     }
 
     void onDownloaded() {
@@ -650,8 +669,6 @@ public class NeStController implements Initializable {
         Platform.runLater(() ->
                 Messages.displayInfo("Removed successfully",
                         "Removal completed"));
-        requestFiles(srvCtrl.getCurPath());
-        requestFreeSpace();
     }
 
     /*
@@ -720,9 +737,10 @@ public class NeStController implements Initializable {
     }
 
     // вывести запрос на замену существующего файла
-    boolean getReplaceConfirmation(String entry, String name) {
+    boolean getReplaceConfirmation(boolean isFile, String name) {
+        String entry = isFile ? "File" : "Folder";
         return Messages.getConfirmation(Alert.AlertType.WARNING,
-                entry+" "+name + " already exists at destination.\n" +
+                entry +" " + name + " already exists at destination.\n" +
                         "Would you like to replace it?",
                 entry+" already exists");
     }

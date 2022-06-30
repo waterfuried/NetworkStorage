@@ -1,4 +1,3 @@
-import javafx.scene.text.TextFlow;
 import prefs.*;
 
 import javafx.application.Platform;
@@ -47,8 +46,9 @@ public class RegController implements Initializable {
         if (!controller.authorized) {
             String login = loginField.getText().trim();
             String password = passwordField.getText().trim();
+            System.out.println("lkndlbdlk");
             Platform.runLater(() -> {
-                btnAuth.setDisable(incompleteUserData());
+                updateButtons();
                 if (btnAuth.isDisabled()) {
                     if (login.length() == 0) loginField.requestFocus();
                     else if (password.length() == 0) passwordField.requestFocus();
@@ -65,8 +65,7 @@ public class RegController implements Initializable {
                    email = emailField.getText().trim(),
                    username = usernameField.getText().trim();
             Platform.runLater(() -> {
-                btnReg.setDisable(incompleteRegData());
-                btnAuth.setDisable(incompleteUserData());
+                updateButtons();
                 if (canRegister) {
                     if (btnReg.isDisabled()) {
                         if (login.length() == 0) loginField.requestFocus();
@@ -160,14 +159,14 @@ public class RegController implements Initializable {
                 usernameField.clear();
             });
             createAdditionalControls();
-            ChangeListener<String> authChangeListener = (observable, oldValue, newValue) ->
-                    btnAuth.setDisable(controller.authorized || incompleteUserData());
-            ChangeListener<String> regChangeListener = (observable, oldValue, newValue) ->
-                    btnReg.setDisable(controller.authorized || incompleteRegData());
-            loginField.textProperty().addListener(authChangeListener);
-            passwordField.textProperty().addListener(authChangeListener);
-            emailField.textProperty().addListener(regChangeListener);
-            usernameField.textProperty().addListener(regChangeListener);
+            ChangeListener<String> changeListener = (observable, oldValue, newValue) -> {
+                btnAuth.setDisable(controller.authorized || incompleteUserData());
+                btnReg.setDisable(controller.authorized || incompleteRegData());
+            };
+            loginField.textProperty().addListener(changeListener);
+            passwordField.textProperty().addListener(changeListener);
+            emailField.textProperty().addListener(changeListener);
+            usernameField.textProperty().addListener(changeListener);
         });
     }
 }
