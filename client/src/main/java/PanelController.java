@@ -44,7 +44,7 @@ public class PanelController implements Initializable {
         btnLevelUp.setDisable(true);
         btnGoBack.setDisable(true);
         updateFreeSpace(Prefs.MAXSIZE);
-        setCurPath(Prefs.serverURL.toString());
+        setCurPath("");
         if (prevPath != null) prevPath.clear();
         btnGoBack.setDisable(true);
     }
@@ -65,7 +65,7 @@ public class PanelController implements Initializable {
     void updateFilesList(Path path) {
         try {
             refreshCurPath(path.normalize().toAbsolutePath().toString());
-            filesTable.getItems().clear();
+            if (filesTable.getItems() != null) filesTable.getItems().clear();
             try (Stream<Path> ps = Files.list(path)) {
                 filesTable.getItems().addAll(ps.map(FileInfo::new).collect(Collectors.toList()));
             }
@@ -79,13 +79,13 @@ public class PanelController implements Initializable {
         // отображение дубликатов в столбцах -- всего лишь один из частых глюков с TableView,
         // другой заключается в невозможности доступа к значениям ячеек отображаемых столбцов
         refreshCurPath(path);
-        filesTable.getItems().clear();
+        if (filesTable.getItems() != null) filesTable.getItems().clear();
         if (serverFolder != null)
             try {
-                filesTable.getItems().addAll(serverFolder);
+                filesTable.getItems().addAll(serverFolder); // иногда стоит использовать setAll
                 filesTable.sort();
             } catch (Exception ex) {
-                Messages.displayError("Failed to update list of files.", "");
+                Messages.displayErrorFX("Failed to update list of files.", "");
             }
     }
 
@@ -156,16 +156,19 @@ public class PanelController implements Initializable {
     String getCurPath() { return curPath.getText(); }
     void setCurPath(String path) {
         refreshCurPath(path);
-        updateFilesList(Paths.get(path));
+        if (serverMode) updateFilesList(path); else updateFilesList(Paths.get(path));
+    }
+
+    String getFullSelectedFilename() {
+        return getCurPath()+(getCurPath().length() == 0 ? "" : File.separatorChar)+getSelectedFilename();
     }
 
     void refreshCurPath(String path) {
         curPath.setText(path);
         if (curPath.getTooltip() == null) {
-            if (!(serverMode && path.equals(Prefs.serverURL.toString())) || path.length() > 0)
-                curPath.setTooltip(new Tooltip(path));
+            if (path.length() > 0) curPath.setTooltip(new Tooltip(path));
         } else {
-            if ((serverMode && path.equals(Prefs.serverURL.toString())) || path.length() == 0)
+            if (path.length() == 0)
                 curPath.setTooltip(null);
             else
                 curPath.getTooltip().setText(path);
@@ -223,9 +226,9 @@ public class PanelController implements Initializable {
             Messages.displayInfo(getSelectedFilename() + " removed successfully", "Removal completed");
             updateFilesList(Paths.get(getCurPath()));
         } catch (IOException ex) {
-            int errCode = Prefs.ERR_NO_SUCH_FILE;
-            if (ex instanceof DirectoryNotEmptyException) errCode = Prefs.ERR_NOT_EMPTY;
-            Messages.displayError(Prefs.errMessage[errCode], Prefs.ERR_CANNOT_REMOVE);
+            Prefs.ErrorCode errCode = Prefs.ErrorCode.ERR_NO_SUCH_FILE;
+            if (ex instanceof DirectoryNotEmptyException) errCode = Prefs.ErrorCode.ERR_NOT_EMPTY;
+            Messages.displayError(Prefs.errMessage[errCode.ordinal()], Prefs.ERR_CANNOT_REMOVE);
         }
     }
 

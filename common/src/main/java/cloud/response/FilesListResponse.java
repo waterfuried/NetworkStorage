@@ -24,16 +24,15 @@ public class FilesListResponse implements CloudMessage {
     private final String folder;
     private int entriesCount, errCode;
 
-    public FilesListResponse(String folder){
-        Path path = Prefs.serverURL;
+    public FilesListResponse(String folder, Path userFolder) {
         this.folder = folder;
-        errCode = 0;
-        if (folder.length() > 0)
-            try { path = path.resolve(folder); }
-            catch (InvalidPathException ex) {
-                errCode = Prefs.ERR_NO_SUCH_FILE;
-            }
-        if (errCode == 0) {
+        Path path = userFolder;
+        errCode = -1;
+        try { path = path.resolve(folder); }
+        catch (InvalidPathException ex) {
+            errCode = Prefs.ErrorCode.ERR_NO_SUCH_FILE.ordinal();
+        }
+        if (errCode < 0) {
             try (Stream<Path> pathStream = Files.list(path)) {
                 entries = pathStream
                         .map(FileInfo::new)
@@ -43,13 +42,13 @@ public class FilesListResponse implements CloudMessage {
                         //.collect(Collectors.toList());
                 entriesCount = entries.split("\n").length;
                 //entriesCount = entries.size();
-                if (entriesCount == 1 && entries/*.get(0).getFilename()*/.length() == 0) entriesCount = 0;
+                if (entriesCount == 1 && entries./*get(0).getFilename().*/length() == 0) entriesCount = 0;
             } catch (IOException ex) {
-                errCode = Prefs.ERR_NO_SUCH_FILE;
+                errCode = Prefs.ErrorCode.ERR_NO_SUCH_FILE.ordinal();
                 ex.printStackTrace();
             }
         }
-        System.out.println("folder='"+folder+"' err="+errCode+" count="+entriesCount+" list="+entries);
+        System.out.println("folder='"+path+"' err="+errCode+" count="+entriesCount+" list="+entries);
     }
 
     public /*List<FileInfo>*/String getEntries() { return entries; }

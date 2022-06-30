@@ -21,7 +21,7 @@ public class Prefs {
 
     // команды сервера
     public static final String COM_AUTHORIZE = "user";
-    //public static final String COM_REGISTER = "reg";
+    public static final String COM_REGISTER = "reg";
     public static final String COM_QUIT ="quit";
     public static final String COM_EXIT ="exit";
 
@@ -49,25 +49,35 @@ public class Prefs {
 
     public static final String SRV_REFUSE = "NEST_ERR";
     public static final String ERR_CANNOT_REMOVE = "Cannot remove";
-    public static final int ERR_WRONG_AUTH = 0;
-    public static final int ERR_NO_SUCH_FILE = 1;
-    public static final int ERR_OUT_OF_SPACE = 2;
-    public static final int ERR_CANNOT_COMPLETE = 3;
-    public static final int ERR_WRONG_LIST = 4;
-    public static final int ERR_NOT_EMPTY = 5;
+
+    public enum ErrorCode {
+        ERR_WRONG_AUTH,
+        ERR_NO_SUCH_FILE,
+        ERR_OUT_OF_SPACE,
+        ERR_CANNOT_COMPLETE,
+        ERR_WRONG_LIST,
+        ERR_NOT_EMPTY,
+        ERR_INTERNAL_ERROR,
+        ERR_WRONG_REG
+    }
     public static final String[] errMessage = {
             "Authorization error",
             "No such file or folder",
             "Out of free space",
             "Cannot copy selected",
             "Failed to get list of entries",
-            "Folder is not empty"
+            "Folder is not empty",
+            "Internal server error.\nTry to repeat operation later",
+            "Registration error"
     };
 
     // папка для имитации сетевого адреса сервера
     // System.getProperty("user.home") рекурсивное вычисление размера домашней папки (~14Гб, ~80K файлов)
     // вызывает переполнение стека
     public static final Path serverURL = Paths.get("temp").normalize().toAbsolutePath();
+
+    // имя папки с журналами сервера
+    public static final String logFolder = "log";
 
     // используемый шаблон времени/даты
     public static final DateTimeFormatter dtFmt = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
@@ -80,7 +90,6 @@ public class Prefs {
 
         StringBuilder sb = new StringBuilder(COM_ID + cmdName);
         for (String s : args)
-            //TODO: некоторые аргументы, например, имена файлов и папок могут содержать пробелы
             if (s.length() > 0) sb.append(" ").append(s);
         return sb.toString();
     }
@@ -140,5 +149,16 @@ public class Prefs {
     public static String capitalize(String s) {
         if (s == null || s.trim().length() == 0) return s;
         return s.substring(0, 1).toUpperCase()+s.substring(1);
+    }
+
+    //TODO: имена файлов и папок могут содержать пробелы
+    // заменять и восстанавливать пробелы в именах файлов при их копировании и удалении
+    public static String encodeSpaces(String s) {
+        if (s == null || s.trim().length() == 0 || !s.contains(" ")) return s;
+        return s.replace(" ", "\"");
+    }
+    public static String decodeSpaces(String s) {
+        if (s == null || s.trim().length() == 0 || !s.contains("\"")) return s;
+        return s.replace("\"", " ");
     }
 }

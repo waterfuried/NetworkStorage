@@ -9,14 +9,14 @@ import java.nio.file.*;
 public class RemovalResponse implements CloudMessage {
     private int errCode;
 
-    public RemovalResponse(String path) {
-        errCode = 0;
+    public RemovalResponse(String path, Path userFolder) {
+        errCode = -1;
         try {
-            Files.delete(Prefs.serverURL.resolve(path));
+            Files.delete(userFolder.resolve(path));
         } catch (IOException ex) {
-            errCode = Prefs.ERR_NO_SUCH_FILE;
+            errCode = Prefs.ErrorCode.ERR_NO_SUCH_FILE.ordinal();
             if (ex instanceof DirectoryNotEmptyException)
-                errCode = Prefs.ERR_NOT_EMPTY;
+                errCode = Prefs.ErrorCode.ERR_NOT_EMPTY.ordinal();
         }
     }
 

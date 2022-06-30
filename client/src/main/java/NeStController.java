@@ -5,13 +5,24 @@
       но суммарный их размер не должен превышать N.
     > выйти за пределы своей папки пользователь не может.
 
+      папка имеет уникальное имя; поскольку имена пользователей могут повторяться, а как их имена
+      (или никнеймы), так и логины - содержать недопустмые для ФС символы, использовать их для
+      имени папки не стоит - ее имя имеет вид "userN", где N определяется по запросу к БД:
+        для каждого пользователя в ней хранятся указанные при регистрации его логин,
+        пароль, имя, личные данные (типа ФИО (и/или адреса email)) и номер N его папки.
+        Для нового пользователя создается папка или с первым свободным (папки некоторых
+        пользователей могли быть удалены), или с номером, равным максимальному
+        из наденных плюс 1.
+
     команды/запросы, возвращают
         - в случае успешного завершения команды/запроса:
-            NEST_DONE имя_команды/запроса дополнительный_код;
+            NEST_DONE [имя_команды/запроса] дополнительный_код;
              доп. код в большинстве случаев равен 0, если он имеет
              особое значение, это указывается в описании;
-             поскольку без авторизации никакие действия не могут быть выполнены,
-             возвращать после NEST_DONE имя запроса авторизации нет смысла;
+             поскольку без авторизации/регистрации никакие действия не могут быть выполнены,
+             при регистрации новый пользователь автоматически авторизуется,
+             различать ответы на запрос авторизации/регистрации
+             и возвращать после NEST_DONE имя запроса нет смысла;
         - в случае ошибки:
             NEST_ERR код-ошибки [имя_команды/запроса] -
              0 - не верное имя пользователя или пароль,
@@ -19,18 +30,19 @@
              2 - недостаточно места для загрузки файла,
              3 - ошибка копирования файла/папки,
              4 - полученный список файлов содержит ошибки,
-             5 - папка не пуста и не может быть удалена.
+             5 - папка не пуста и не может быть удалена,
+             6 - внутренняя ошибка сервера,
+             7 - ошибка регистрации пользователя.
           ! в процессе разработки в протокол было внесено дополнение:
           ! несмотря на то, что коды ошибок более или менее однозначно определяют запрос/команду,
           ! при которых они произошли, во избежание недоразумений, для некоторых запросов/команд,
           ! например, при отправке файла с/на сервер, после кода ошибки укзывается имя команды
           ! (запроса) - это позволит корректно обрабатывать ситуации неполной передачи данных;
 
-    1. авторизация пользователя по имени;
-       указание пароля требуется, но пока он не проверяется;
+    1. авторизация пользователя по логину и паролю;
        длина пароля должна быть не меньше 4 (первоначально):
-        /user имя пароль
-       после доп. кода 0 возвращаются полученные имя и пароль
+        /user логин пароль
+       после доп. кода 0 возвращается имя пользователя, если он зарегистрирован
     2. завершить сеанс пользователя:
         /quit
         /exit
@@ -48,12 +60,20 @@
         /space,
        размер в байтах возвращается в значении доп. кода.
     5. залить файл/папку с клиента на сервер:
-        /upload имя_файла/папки-на-компьютере-клиента путь-на-компьютере-клиента имя-на-сервере размер [дата]
+        /upload путь-с-именем-файла/папки-на-компьютере-клиента путь-на-сервере размер [дата]
     6. скачать файл/папку с сервера на клиент:
-        /download имя-на-сервере путь-на-компьютере-клиента размер [дата]
+        /download путь-с-именем-файла/папки-на-сервере путь-на-компьютере-клиента размер [дата]
     7. удалить файл/папку на сервере:
         /remove имя_файла/папки
        папка не может быть удалена, если она не пуста
+    8. регистрация нового пользователя;
+       длина пароля должна быть не меньше 4 (первоначально):
+        /reg логин пароль имя-пользователя email
+       после доп. кода 0 возвращается имя пользователя, если он зарегистрирован
+    9. TODO: переименование файла/папки
+
+    TODO: команды №№5,6,7,9 - в ФС семейств FAT и NTFS регистр символов в именах файлов не важен,
+          в ФС, используемых семейством ОС Unix - ext, ext2, ext3...  - он имеет значение
 
     команды 5 и 6
     - работают по принципу "1 за раз" - например,
@@ -67,6 +87,11 @@
     > если папка содержит несколько подпапок и/или файлов,
       перед заливкой ее на сервер нужно убедиться в наличии
       достаточного свободного места.
+
+    Урок 5. Code Review
+    1. Добавляем аутентификацию и создание уникальных папок для каждого пользователя при первом входе.
+    На клиенте решить вопрос как показывать окна. (Регистрация, Вход, Приложение)
+    Лучше использовать SQLite на стороне сервера! Или публичные открытые СУБД.
 */
 import prefs.*;
 
@@ -101,9 +126,8 @@ public class NeStController implements Initializable {
 
     boolean authorized = false, clientFocused, serverFocused, useNetty = true;
 
-    String user, password;
-    // панель-источник перетаскивания: 0=клиент, 1=сервер
-    private int dragSrc;
+    private String user; // имя пользователя
+    private int dragSrc; // панель-источник перетаскивания: 0=клиент, 1=сервер
 
     // цикл обработки ответов сервера на запросы/команды
     private void readLoop() {
@@ -116,13 +140,11 @@ public class NeStController implements Initializable {
                         // ожидается только ответ сервера на запрос авторизации
                         if (cmd.startsWith(Prefs.getCommand(Prefs.SRV_REFUSE))) {
                             String[] val = cmd.split(" ", 2);
-                            Platform.runLater(() ->
-                                    regController.textArea.appendText("Login failed with code " + val[1]));
+                            onLoginFailed(Integer.parseInt(val[1]));
                         } else
                             if (cmd.startsWith(Prefs.getCommand(Prefs.SRV_ACCEPT))) {
                             String[] val = cmd.split(" ", 4);
                             user = val[2];
-                            password = val[3];
                             doLogInActions();
                         }
                     } else {
@@ -160,7 +182,7 @@ public class NeStController implements Initializable {
                                                         correct = item.length == 3;
                                                         if (correct) {
                                                             try {
-                                                                fi.add(new FileInfo(item[0],
+                                                                fi.add(new FileInfo(Prefs.decodeSpaces(item[0]),
                                                                         Long.parseLong(item[1]),
                                                                         FileInfo.getModified(Long.parseLong(item[2]))));
                                                             } catch (Exception ex) {
@@ -177,7 +199,7 @@ public class NeStController implements Initializable {
                                             if (correct)
                                                 srvCtrl.updateFilesList(folder);
                                             else
-                                                Messages.displayErrorFX(Prefs.ERR_WRONG_LIST, "");
+                                                Messages.displayErrorFX(Prefs.ErrorCode.ERR_WRONG_LIST.ordinal(), "");
                                         }
                                         break;
                                     case Prefs.COM_UPLOAD: onUploaded(); break;
@@ -191,7 +213,7 @@ public class NeStController implements Initializable {
                             String[] response = cmd.split(" ", 3);
                             int errCode;
                             try { errCode = Integer.parseInt(response[1]); }
-                            catch (Exception ex) { errCode = 0; }
+                            catch (Exception ex) { errCode = Prefs.ErrorCode.ERR_INTERNAL_ERROR.ordinal(); }
                             onFailed(response.length == 3 ? response[2] : "", errCode);
                         }
                     }
@@ -205,12 +227,24 @@ public class NeStController implements Initializable {
         try {
             while (true) {
                 CloudMessage message = nettyNetwork.read();
-                System.out.println("response="+message);
+                if (message != null) System.out.println("response="+message);
                 // запрос авторизации
                 if (message instanceof AuthResponse) {
                     AuthResponse auth = (AuthResponse)message;
-                    System.out.println("authorization, server return "+auth.getNickname());
-                    if ((user = auth.getNickname()) != null) doLogInActions();
+                    System.out.println("authorization, server return "+auth.getUsername());
+                    if ((user = auth.getUsername()) != null)
+                        doLogInActions();
+                    else
+                        onLoginFailed(auth.getErrCode());
+                }
+                // запрос регистрации
+                if (message instanceof RegResponse) {
+                    RegResponse reg = (RegResponse)message;
+                    System.out.println("registration, server return "+reg.getUsername());
+                    if ((user = reg.getUsername()) != null)
+                        doLogInActions();
+                    else
+                        onLoginFailed(reg.getErrCode());
                 }
                 // запрос на завершение сеанса пользователя
                 if (message instanceof LogoutResponse) {
@@ -232,7 +266,7 @@ public class NeStController implements Initializable {
                             "\nentries="+files.getEntriesCount()+
                             "\npath="+files.getFolder()+
                             "\nlist="+files.getEntries());
-                    if (files.getErrCode() == 0) {
+                    if (files.getErrCode() < 0) {
                     // TODO:
                     //  это вся обработка при формировании ответа в виде списка с типом элементов FileInfo,
                     //  но такие ответы сервера почему-то не появляются среди полученных (куда-то теряются)
@@ -273,12 +307,12 @@ public class NeStController implements Initializable {
                         if (correct)
                             srvCtrl.updateFilesList(folder);
                     } else
-                        Messages.displayErrorFX(Prefs.ERR_WRONG_LIST, "");
+                        Messages.displayErrorFX(Prefs.ErrorCode.ERR_WRONG_LIST.ordinal(), "");
                 }
                 // запрос копирования с клиента на сервер
                 if (message instanceof UploadResponse) {
                     UploadResponse upload = (UploadResponse)message;
-                    if (upload.getErrCode() == 0)
+                    if (upload.getErrCode() < 0)
                         onUploaded();
                     else
                         onFailed(Prefs.COM_UPLOAD, upload.getErrCode());
@@ -286,7 +320,7 @@ public class NeStController implements Initializable {
                 // запрос копирования с сервера на клиент
                 if (message instanceof DownloadResponse) {
                     DownloadResponse download = (DownloadResponse)message;
-                    if (download.getErrCode() == 0)
+                    if (download.getErrCode() < 0)
                         onDownloaded();
                     else
                         onFailed(Prefs.COM_DOWNLOAD, download.getErrCode());
@@ -294,7 +328,7 @@ public class NeStController implements Initializable {
                 // запрос удаления в пользовательской папке
                 if (message instanceof RemovalResponse) {
                     RemovalResponse rm = (RemovalResponse)message;
-                    if (rm.getErrCode() == 0)
+                    if (rm.getErrCode() < 0)
                         onRemoved();
                     else
                         onFailed(Prefs.COM_REMOVE, rm.getErrCode());
@@ -332,6 +366,14 @@ public class NeStController implements Initializable {
                 Prefs.getCommand(Prefs.COM_AUTHORIZE, "%s %s"), login, password));
     }
 
+    void register(String login, String password, String email, String username) {
+        if (useNetty)
+            sendCmdOrRequestNetty(new RegRequest(login, password, email, username));
+        else
+            sendCmdOrRequest(String.format(
+                    Prefs.getCommand(Prefs.COM_REGISTER, "%s %s %s %s"), login, password, username, email));
+    }
+
     // запрос на завершение сеанса пользователя
     @FXML void logOut(/*ActionEvent actionEvent*/) {
         System.out.println("requesting logout");
@@ -365,7 +407,7 @@ public class NeStController implements Initializable {
         if (useNetty)
             sendCmdOrRequestNetty(new RemovalRequest(name));
         else
-            sendCmdOrRequest(Prefs.getCommand(Prefs.COM_REMOVE, name));
+            sendCmdOrRequest(Prefs.getCommand(Prefs.COM_REMOVE, Prefs.encodeSpaces(name)));
     }
 
     // проверка существования файла/папки в текущей папке на сервере/клиенте
@@ -406,18 +448,18 @@ public class NeStController implements Initializable {
     // отправка запроса
     private void upload() {
         System.out.println("requesting upload");
-        // /upload source_name source_path relative_destination_path size [date]
-        //String dst = Paths.get(Prefs.serverURL).relativize(Paths.get(srvCtrl.getCurPath())).toString();
+        // /upload source_path destination_path size [date]
         //TODO: при копировании больших файлов следовало бы отображать индикатор копирования
-        String dst = Paths.get(Prefs.serverURL.toString(), srvCtrl.getCurPath()).toString();
+        String dst = Prefs.encodeSpaces(Paths.get(srvCtrl.getCurPath()).toString());
         if (dst.length() == 0) dst = useNetty ? "" : ".";
         FileInfo fi = cliCtrl.filesTable.getSelectionModel().getSelectedItem();
         if (useNetty)
-            sendCmdOrRequestNetty(new UploadRequest(cliCtrl.getSelectedFilename(),
-                    cliCtrl.getCurPath(), dst, fi.getSize(), fi.getModifiedAsLong()));
+            sendCmdOrRequestNetty(new UploadRequest(cliCtrl.getFullSelectedFilename(),
+                    dst, fi.getSize(), fi.getModifiedAsLong()));
         else
-            sendCmdOrRequest(Prefs.getCommand(Prefs.COM_UPLOAD, cliCtrl.getSelectedFilename(),
-                cliCtrl.getCurPath(), dst, fi.getSize()+"", fi.getModifiedAsLong()+""));
+            sendCmdOrRequest(Prefs.getCommand(Prefs.COM_UPLOAD,
+                    Prefs.encodeSpaces(cliCtrl.getFullSelectedFilename()),
+                    dst, fi.getSize()+"", fi.getModifiedAsLong()+""));
     }
 
     // запрос на копирование файла/папки с сервера
@@ -445,16 +487,13 @@ public class NeStController implements Initializable {
         FileInfo fi = srvCtrl.filesTable.getSelectionModel().getSelectedItem();
         if (useNetty)
             sendCmdOrRequestNetty(new DownloadRequest(
-                    (srvCtrl.getCurPath().length() == 0
-                            ? "" : srvCtrl.getCurPath()+File.separator
-                            )+srvCtrl.getSelectedFilename(),
-                    cliCtrl.getCurPath(), fi.getSize(), fi.getModifiedAsLong()));
+                    srvCtrl.getFullSelectedFilename(),
+                    cliCtrl.getCurPath(),
+                    fi.getSize(), fi.getModifiedAsLong()));
         else
             sendCmdOrRequest(Prefs.getCommand(Prefs.COM_DOWNLOAD,
-                    (srvCtrl.getCurPath().length() == 0
-                            ? ""
-                            : srvCtrl.getCurPath()+File.separator)
-                    +srvCtrl.getSelectedFilename(), cliCtrl.getCurPath(),
+                    Prefs.encodeSpaces(srvCtrl.getFullSelectedFilename()),
+                    Prefs.encodeSpaces(cliCtrl.getCurPath()),
                     fi.getSize()+"", fi.getModifiedAsLong()+""));
     }
 
@@ -462,10 +501,10 @@ public class NeStController implements Initializable {
        реализация копирования drag-and-drop-перетаскиванием
     */
     void dragStarted(boolean client, MouseEvent ev) {
+        dragSrc = client ? 0 : 1;
         Dragboard db = (client ? cliCtrl : srvCtrl).filesTable.startDragAndDrop(TransferMode.ANY);
         ClipboardContent c = new ClipboardContent();
         c.putString((client ? cliCtrl : srvCtrl).getSelectedFilename());
-        dragSrc = client ? 0 : 1;
         db.setContent(c);
         ev.consume();
     }
@@ -503,7 +542,7 @@ public class NeStController implements Initializable {
                 } while (retry);
                 if (!client) srvCtrl.updateFilesList(Paths.get(srvCtrl.getCurPath()));
             } else
-            if (client) tryDownload(); else tryUpload();
+                if (client) tryDownload(); else tryUpload();
             if (client) cliCtrl.updateFilesList(Paths.get(cliCtrl.getCurPath()));
         }
         ev.setDropCompleted(db.hasFiles());
@@ -556,8 +595,11 @@ public class NeStController implements Initializable {
         authorized = true;
         Platform.runLater(() -> {
             setTitle();
+            // свойство всего текста в TextArea,
+            // для задания цвета отдельных строк вместо нее нужно исполльзовать TextFlow
+            //regController.textArea.setStyle("-fx-text-fill: green;");
             regController.textArea.appendText("Logged in as " + user);
-            regController.btnReg.setDisable(true);
+            regController.updateButtons();
             srvCtrl.setServerMode();
             menuItemLogIn.setDisable(true);
             menuItemLogOut.setDisable(false);
@@ -566,6 +608,14 @@ public class NeStController implements Initializable {
         // из папки пользователя и размер оставшегося в ней свободного места
         requestFiles("");
         requestFreeSpace();
+    }
+
+    void onLoginFailed(int errCode) {
+        Platform.runLater(() -> {
+            regController.textArea.appendText("Login failed with "+
+                    Prefs.errMessage[errCode].toLowerCase()+"\n");
+            regController.updateButtons();
+        });
     }
 
     void doLogOutActions() {
@@ -663,8 +713,7 @@ public class NeStController implements Initializable {
         catch (IOException ex) { ex.printStackTrace(); }
     }
 
-    // отобразить окно авторизации
-    // TODO: расширить его функционал - добавить возможность регистрации
+    // отобразить окно авторизации/регистрации
     @FXML public void showRegForm(/*ActionEvent actionEvent*/) {
         if (regStage == null) createRegStage();
         regStage.show();
