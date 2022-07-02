@@ -21,7 +21,7 @@ public class PanelController implements Initializable {
     @FXML TableView<FileInfo> filesTable;
     @FXML Button btnLevelUp, btnGoBack, btnRefresh;
 
-    private Stack prevPath;
+    private Stack<String> prevPath;
     private int curDiskIdx;
     private boolean serverMode = false;
     private List<FileInfo> serverFolder;
@@ -100,7 +100,7 @@ public class PanelController implements Initializable {
     }
 
     void pushCurrentPath() {
-        if (prevPath == null) prevPath = new Stack(50);
+        if (prevPath == null) prevPath = new Stack<>();
         prevPath.push(getCurPath());
         if (btnGoBack.isDisable()) btnGoBack.setDisable(false);
     }
@@ -177,10 +177,10 @@ public class PanelController implements Initializable {
 
     int getCurDisk() { return curDiskIdx; }
 
-    int getColumnByName(String name) {
+    int getSizeColumn() {
         int i = 0;
         while (i < filesTable.getColumns().size() &&
-               !filesTable.getColumns().get(i).getText().equals(name)) i++;
+               !filesTable.getColumns().get(i).getText().equals("Size")) i++;
         return i < filesTable.getColumns().size() ? i : -1;
     }
 
@@ -194,7 +194,7 @@ public class PanelController implements Initializable {
             Path p = Paths.get(getCurPath(), filesTable.getSelectionModel().getSelectedItem().getFilename());
             boolean isFolder = false;
             if (serverMode) {
-                int i = getColumnByName("Size");
+                int i = getSizeColumn();
                 if (i >= 0) {
                     TableColumn<FileInfo, Long> fileSizeColumn =
                             (TableColumn<FileInfo, Long>)filesTable.getColumns().get(i);

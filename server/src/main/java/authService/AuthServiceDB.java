@@ -1,7 +1,10 @@
 package authService;
 
+import org.sqlite.SQLiteErrorCode;
+import org.sqlite.SQLiteException;
 import prefs.*;
 import java.sql.*;
+import java.util.logging.Level;
 
 public class AuthServiceDB implements AuthService {
     public static final String JDBC = "jdbc";
@@ -10,9 +13,10 @@ public class AuthServiceDB implements AuthService {
     private static Connection connection;
     private static Statement st;
 
-    private final EventLogger logger = new EventLogger(AuthServiceDB.class.getName(), null);
+    private final EventLogger logger;
 
-    public AuthServiceDB() {
+    public AuthServiceDB(EventLogger logger) {
+        this.logger = logger;
         try { connect(); }
         catch (Exception ex) { logger.logError(ex); }
     }
@@ -32,7 +36,10 @@ public class AuthServiceDB implements AuthService {
 
     private String adjustQuery(String query) { return String.format(query, DB_USERS_TABLE); }
 
-    // проверка связи с БД - поиск таблицы пользователей
+    /**
+     * проверка связи с БД - поиск таблицы пользователей
+     * @return true, если связь с БД установлена, false - в противном случае
+     */
     private boolean testDB() {
         try {
             if (connection == null || connection.isClosed()) return false;
@@ -52,30 +59,52 @@ public class AuthServiceDB implements AuthService {
         }
     }
 
-    // проверить наличие пользователя в таблице БД по логину и паролю
+    /**
+     * проверить наличие пользователя в таблице БД по логину и паролю
+     * @param login    - логин
+     * @param password - пароль
+     * @param userdata - персональные данные пользователя (не обязательно)
+     * @return
+     *      имя пользователя, если он найден в БД
+     *      пустая строка, если он не найден в БД
+     *      null, если произошла ошибка обращения к БД
+     */
     @Override public String getUsername(String login, String password, String ... userdata) {
         try (PreparedStatement ps = connection.prepareStatement(
                 adjustQuery("SELECT * FROM %s WHERE login = ? AND pwd = ? LIMIT 1;"))) {
             ps.setString(1, login);
             ps.setString(2, password);
+            if (userdata != null && userdata.length > 0)
+                for (int i = 0; i < userdata.length && userdata[i].length() > 0; i++)
+                    ps.setString(i+3, userdata[i]);
             ResultSet rs = ps.executeQuery();
-            if (rs.next())
-                return rs.getString("username");
+            return rs.next() ? rs.getString("username") : "";
         } catch (SQLException ex) { logger.logError(ex); }
         return null;
     }
 
-    // получить имя и номер пользователя по его логину и паролю
+    /**
+     * получить имя и номер пользователя по его логину и паролю
+     * @param login    - логин
+     * @param password - пароль
+     * @param userdata - персональные данные пользователя (не обязательно)
+     * @return
+     *      имя пользователя и номер его папки, разделенные знаком табуляции, если пользователь в БД найден
+     *      пустая строка, если произошла ошибка обращения к БД
+     *      null, если пользователь в БД не найден
+     */
     @Override public String getUserInfo(String login, String password, String ... userdata) {
         try (PreparedStatement ps = connection.prepareStatement(
                 adjustQuery("SELECT * FROM %s WHERE login = ? AND pwd = ? LIMIT 1;"))) {
             ps.setString(1, login);
             ps.setString(2, password);
+            if (userdata != null && userdata.length > 0)
+                for (int i = 0; i < userdata.length && userdata[i].length() > 0; i++)
+                    ps.setString(i+3, userdata[i]);
             ResultSet rs = ps.executeQuery();
-            if (rs.next())
-                return rs.getString("username")+"\t"+rs.getInt("usernum");
+            return rs.next() ? rs.getString("username")+"\t"+rs.getInt("usernum") : null;
         } catch (SQLException ex) { logger.logError(ex); }
-        return null;
+        return "";
     }
 
     // проверить наличие пользователя в таблице БД по имени пользователя
@@ -83,6 +112,20 @@ public class AuthServiceDB implements AuthService {
         try (PreparedStatement ps = connection.prepareStatement(
                 adjustQuery("SELECT username FROM %s WHERE username = ? LIMIT 1;"))) {
             ps.setString(1, username);
+            return ps.executeQuery().next();
+        } catch (SQLException ex) { logger.logError(ex); }
+        return false;
+    }
+
+    // проверить наличие пользователя в таблице БД по уникальным полям:
+    // если в таблице БД есть пользователь, у которого лишь часть УНИКАЛЬНЫХ полей
+    // (например, логин и/или адрес почты) совпадают с указанными при регистрации,
+    // такое совпадение есть попытка зарегистрировать уже зарегистрированного
+    private boolean alreadyRegistered(String login, String userdata) {
+        try (PreparedStatement ps = connection.prepareStatement(
+                adjustQuery("SELECT username FROM %s WHERE login = ? OR email = ? LIMIT 1;"))) {
+            ps.setString(1, login);
+            ps.setString(2, userdata);
             return ps.executeQuery().next();
         } catch (SQLException ex) { logger.logError(ex); }
         return false;
@@ -102,12 +145,24 @@ public class AuthServiceDB implements AuthService {
         }
     }
 
-    //добавить нового зарегистрированного пользователя
+    /**
+     * зарегистрировать нового пользователя
+     * @param login    - логин
+     * @param password - пароль
+     * @param username - имя
+     * @param userdata - персональные данные пользователя (не обязательно)
+     * @return
+     *      положительное целое, если пользоваетель зарегистрирован
+     *      0, если пользователь УЖЕ зарегистрирован
+     *      -1, если при регистрации произошла ошибка
+     *      -2, если число пользователей в базе УЖЕ достигло предела
+     */
     @Override public int registerUser(String login, String password, String username, String ... userdata) {
-        if (userdata == null || userdata.length == 0) return 0;
-        if (getUsername(login, password) == null) {
-            int number = getMaxNumber()+1;
-            if (number == 0) return 0;
+        if (userdata == null || userdata.length == 0 || alreadyRegistered(login, userdata[0]))
+            return 0;
+        else {
+            int number = getFirstFreeNumber();
+            if (number <= 0) return number;
             try (PreparedStatement ps = connection.prepareStatement(
                     adjustQuery("INSERT INTO %s (login, pwd, email, username, usernum) VALUES (?, ?, ?, ?, ?);"))) {
                 ps.setString(1, login);
@@ -119,17 +174,24 @@ public class AuthServiceDB implements AuthService {
                 return number;
             } catch (SQLException ex) { logger.logError(ex); }
         }
-        return 0;
+        return -1;
     }
 
-    //найти максимальный номер пользователя
-    //TODO: найти первый свободный номер пользователя
-    public int getMaxNumber() {
+    /**
+     * найти первый свободный номер пользователя
+     * @return
+     *      положительное целое - найденный номер,
+     *      0, если число пользователей в базе уже достигло предела,
+     *      -1, если произошла ошибка работы с БД
+     */
+    private int getFirstFreeNumber() {
         try (PreparedStatement ps = connection.prepareStatement(
-                adjustQuery("SELECT MAX(usernum) FROM %s;"))) {
+                adjustQuery("SELECT usernum FROM %s;"))) {
             ResultSet rs = ps.executeQuery();
-            if (rs.next())
-                return rs.getInt(1);
+            if (!rs.isBeforeFirst()) return 1; // столбец пуст
+            int i = 1;
+            while (i < Integer.MAX_VALUE && rs.next() && rs.getInt(1) == i) i++;
+            return i < Integer.MAX_VALUE ? i : 0;
         } catch (SQLException ex) { logger.logError(ex); }
         return -1;
     }

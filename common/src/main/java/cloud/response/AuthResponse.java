@@ -20,18 +20,20 @@ public class AuthResponse implements CloudMessage {
         this.username = username;
         errCode = -1;
         if (username != null) {
-            boolean b;
-            try {
-                b = new File(userFolder.toString()).exists();
-                if (!b) b = new File(userFolder.toString()).mkdir();
-            } catch (Exception ex) {
-                b = false;
-                ex.printStackTrace();
-            }
-            if (!b) errCode = Prefs.ErrorCode.ERR_INTERNAL_ERROR.ordinal();
-        }
-            else
-                errCode = Prefs.ErrorCode.ERR_WRONG_AUTH.ordinal();
+            if (username.length() > 0) {
+                boolean b;
+                try {
+                    b = new File(userFolder.toString()).exists();
+                    if (!b) b = new File(userFolder.toString()).mkdir();
+                } catch (Exception ex) {
+                    b = false;
+                    ex.printStackTrace();
+                }
+                if (!b) errCode = Prefs.ErrorCode.ERR_INTERNAL_ERROR.ordinal();
+            } else
+                errCode = Prefs.ErrorCode.ERR_INTERNAL_ERROR.ordinal();
+        } else
+            errCode = Prefs.ErrorCode.ERR_WRONG_AUTH.ordinal();
     }
 
     public String getUsername() { return username; }

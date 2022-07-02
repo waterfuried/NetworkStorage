@@ -1,11 +1,8 @@
 package prefs;
 
 import java.io.*;
-
 import java.nio.file.*;
-
 import java.time.*;
-
 import java.util.*;
 
 public class FileInfo {
@@ -65,7 +62,8 @@ public class FileInfo {
 
     // вычислить суммарный размер файлов в папке, включая ее подпапки
     public static long getSizes(Path path) {
-        long sum = 0;
+        if (!Files.exists(path)) return 0L;
+        long sum = 0L;
         List<String> list = getItems(path);
         // для прохода по пути с получением всех его элементов
         // можно использовать метод Files.walk

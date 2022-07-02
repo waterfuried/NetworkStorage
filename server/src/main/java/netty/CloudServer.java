@@ -9,17 +9,18 @@ import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.codec.serialization.*;
 
-import prefs.Prefs;
+import prefs.*;
 import authService.*;
 
 public class CloudServer {
     public CloudServer() {
+        final EventLogger logger = new EventLogger(CloudServer.class.getName(), null);
         EventLoopGroup auth = new NioEventLoopGroup(1);
         EventLoopGroup worker = new NioEventLoopGroup();
 
         AuthService tmp;
         do {
-            tmp = new AuthServiceDB();
+            tmp = new AuthServiceDB(logger);
             if (!tmp.isServiceActive()) tmp.close();
         } while (!tmp.isServiceActive());
         final AuthService authService = tmp;
@@ -44,11 +45,12 @@ public class CloudServer {
             System.out.println("Server is ready");
             future.channel().closeFuture().sync();
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.logError(ex);
         } finally {
             auth.shutdownGracefully();
             worker.shutdownGracefully();
             authService.close();
+            logger.closeHandlers();
         }
     }
 

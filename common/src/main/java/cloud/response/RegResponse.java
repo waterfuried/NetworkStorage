@@ -16,22 +16,25 @@ public class RegResponse implements CloudMessage {
     private final String username;
     private int errCode;
 
-    public RegResponse(String username, Path userFolder) {
+    public RegResponse(String username, int userNumber, Path userFolder) {
         this.username = username;
         errCode = -1;
         if (username != null) {
             boolean b;
             try {
-                b = new File(userFolder.toString()).exists();
-                if (!b) b = new File(userFolder.toString()).mkdir();
+                // при регистрации нового пользователя определенная для него папка не должна существовать
+                b = !new File(userFolder.toString()).exists() && new File(userFolder.toString()).mkdir();
             } catch (Exception ex) {
                 b = false;
                 ex.printStackTrace();
             }
             if (!b) errCode = Prefs.ErrorCode.ERR_INTERNAL_ERROR.ordinal();
-        }
-        else
-            errCode = Prefs.ErrorCode.ERR_WRONG_REG.ordinal();
+        } else
+            errCode = userNumber == 0
+                ? Prefs.ErrorCode.ERR_WRONG_REG.ordinal()
+                : userNumber == -1
+                    ? Prefs.ErrorCode.ERR_INTERNAL_ERROR.ordinal()
+                    : Prefs.ErrorCode.ERR_DB_OVERFLOW.ordinal();
     }
 
     public String getUsername() { return username; }
