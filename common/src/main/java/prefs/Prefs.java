@@ -1,6 +1,5 @@
 package prefs;
 
-import java.io.*;
 import java.nio.file.*;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
@@ -10,8 +9,9 @@ public class Prefs {
     //public static final int TIMEOUT = 120; // время на прохождение авторизации, секунды
 
     public static final long MAXSIZE = 1_000_000_000; // максимальный размер папки на сервере - 1 Гб
-    public static final int BUF_SIZE = 1024; // размер буфера чтения/записи
+    public static final int BUF_SIZE = 10*1024; // размер буфера чтения/записи
     public static final int MIN_PWD_LEN = 4; // минимальная длина пароля
+    public static final int SHOWABLE_SIZE = 256;
 
     // название проекта
     public static final String SHORT_TITLE = "NeSt";
@@ -30,12 +30,11 @@ public class Prefs {
     public static final String COM_GET_FILES = "files";
 
     public static final String COM_UPLOAD = "upload";
+    public static final String COM_UPLOAD_DATA = "upld";
     public static final String COM_DOWNLOAD = "download";
     public static final String COM_REMOVE = "remove";
     //public static final String COM_RENAME = "rename";
-
-    public static final String COM_OPTION_OVERWRITE = "overwrite";
-//    public static final String COM_OPTION_SKIP = "skip";
+    public static final String COM_EXISTS = "exists";
 
     // команды терминала
     public static final String COM_TERM_CAT = "cat";
@@ -53,7 +52,6 @@ public class Prefs {
 
     public static final String SRV_REFUSE = "NEST_ERR";
     public static final String ERR_CANNOT_REMOVE = "Cannot remove";
-    public static final int CONFIRM_OVERWRITE = 10_000;
 
     public enum ErrorCode {
         ERR_WRONG_AUTH,
@@ -64,7 +62,8 @@ public class Prefs {
         ERR_NOT_EMPTY,
         ERR_INTERNAL_ERROR,
         ERR_WRONG_REG,
-        ERR_DB_OVERFLOW
+        ERR_DB_OVERFLOW,
+        ERR_WRONG_REPLACEMENT
     }
     public static final String[] errMessage = {
             "Authorization error",
@@ -75,7 +74,8 @@ public class Prefs {
             "Folder is not empty",
             "Internal server error;\ntry to repeat operation later",
             "Registration error",
-            "Number of users already at maximum, please inform administrator"
+            "Number of users already at maximum, please inform administrator",
+            "It is not possible to replace a file with a folder\n(or a folder with a file)"
     };
 
     // папка для имитации сетевого адреса сервера
@@ -171,18 +171,14 @@ public class Prefs {
         return s.replace("\"", " ");
     }
 
-    public static boolean isValidOption(String option) {
-        return option.equalsIgnoreCase(COM_OPTION_OVERWRITE);
-    }
-
-    public static void doCopying(String src, String dst) {
-        byte[] buf = new byte[BUF_SIZE];
-        try (BufferedInputStream bis = new BufferedInputStream(
-                new FileInputStream(src), BUF_SIZE);
-             BufferedOutputStream bos = new BufferedOutputStream(
-                     new FileOutputStream(dst), BUF_SIZE)) {
-            int bytesRead;
-            while ((bytesRead = bis.read(buf)) >= 0) bos.write(buf, 0, bytesRead);
-        } catch (Exception ex) { ex.printStackTrace(); }
+    public static boolean resetFile(Path dst) {
+        try {
+            Files.write(dst, new byte[]{},
+                    StandardOpenOption.TRUNCATE_EXISTING);
+            return true;
+        } catch (Exception ex) {
+            ex.printStackTrace();
+            return false;
+        }
     }
 }

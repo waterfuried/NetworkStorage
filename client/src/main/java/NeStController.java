@@ -32,7 +32,9 @@
              4 - полученный список файлов содержит ошибки,
              5 - папка не пуста и не может быть удалена,
              6 - внутренняя ошибка сервера,
-             7 - ошибка регистрации пользователя.
+             7 - ошибка регистрации пользователя,
+             8 - количество зарегистрированных пользователей достигло максимума,
+             9 - невозможно заменить файл папкой (или папку - файлом).
           ! в процессе разработки в протокол было внесено дополнение:
           ! несмотря на то, что коды ошибок более или менее однозначно определяют запрос/команду,
           ! при которых они произошли, во избежание недоразумений, для некоторых запросов/команд,
@@ -41,36 +43,50 @@
 
     1. авторизация пользователя по логину и паролю;
        длина пароля должна быть не меньше 4 (первоначально):
-        /user логин пароль
+       // TODO: вместо пароля передавать его хэш
+         /user логин пароль
        после доп. кода 0 возвращается имя пользователя, если он зарегистрирован
     2. завершить сеанс пользователя:
-        /quit
-        /exit
+         /quit
+         /exit
     3. вернуть список файлов в папке пользователя на сервере.
        если нужно вернуть содержимое корневой папки пользователя,
        имя указывается как ".";
        если запрошенной папки нет на сервере, вернуть код ошибки 1:
-        /files имя
+         /files имя
        если в запрашиваемой папке нет файлов, доп. код равен 0, иначе он равен
        числу файлов в ней, за которым возвращается список соответствующей длины,
        содержащий последовательность из имени, размера и даты файла/папки,
        элементы последовательности разделены знаком :,
        элементы списка - переносом на новую строку
     4. вернуть размер свободного места на сервере:
-        /space,
+         /space,
        размер в байтах возвращается в значении доп. кода.
-    5. залить файл/папку с клиента на сервер:
-        /upload путь-с-именем-файла/папки-на-компьютере-клиента путь-на-сервере размер [дата] [overwrite]
-    6. скачать файл/папку с сервера на клиент:
-        /download путь-с-именем-файла/папки-на-сервере путь-на-компьютере-клиента размер [дата]
+    5. копировать файл/папку с клиента на сервер:
+       5.1. инициировать передачу
+         /upload путь-с-именем-файла/папки-на-компьютере-клиента путь-на-сервере размер [дата]
+       сервер возвращает id передачи данных, если передаваемый элемент - файл ненулевого размера
+       5.2. передать блок данных файла на сервер
+         /upld id размер-блока-данных блок-данных
+    6. копировать файл/папку с сервера на клиент:
+         /download путь-с-именем-файла/папки-на-сервере
     7. удалить файл/папку на сервере:
-        /remove имя_файла/папки
+         /remove имя_файла/папки
        папка не может быть удалена, если она не пуста
     8. регистрация нового пользователя;
        длина пароля должна быть не меньше 4 (первоначально):
-        /reg логин пароль имя-пользователя email
+         /reg логин пароль имя-пользователя email
        после доп. кода 0 возвращается имя пользователя, если он зарегистрирован
-    9. TODO: переименование файла/папки
+    9. проверить наличие файла/папки (выполняется перед передачей данных на сервер)
+       NB: в ФС семейств FAT и NTFS регистр символов в именах файлов не важен,
+           в ФС, используемых семейством ОС Unix - ext, ext2, ext3...  - он имеет значение,
+           поэтому не всегда есть гарантия, что файл/папка существует в месте назначения,
+           и его/ее наличие нужно проверять локально, используя сервис ФС
+         /exists имя_файла/папки
+       в доп. коде возвращает
+	     - истинный размер элемента, если он существует (-1 для папок, 0+ для файлов)
+	     - -2, если элемент не существует
+   10. TODO: переименование файла/папки
 
     команды 5 и 6
     - работают по принципу "1 за раз" - например,
@@ -87,10 +103,8 @@
       перед заливкой ее на сервер нужно убедиться в наличии
       достаточного свободного места.
 
-    Урок 5. Code Review
-    1. Добавляем аутентификацию и создание уникальных папок для каждого пользователя при первом входе.
-    На клиенте решить вопрос как показывать окна. (Регистрация, Вход, Приложение)
-    Лучше использовать SQLite на стороне сервера! Или публичные открытые СУБД.
+   Урок 7. JVM и GC
+1. Сдать проект на Code Review.
 */
 import prefs.*;
 
@@ -110,7 +124,6 @@ import java.io.*;
 import java.net.URL;
 import java.nio.file.*;
 import java.util.*;
-import java.util.logging.Level;
 
 public class NeStController implements Initializable {
     @FXML VBox clientView, serverView;
@@ -124,13 +137,14 @@ public class NeStController implements Initializable {
 
     PanelController cliCtrl, srvCtrl;
 
-    boolean authorized = false, clientFocused, serverFocused, useNetty = true;
+    boolean authorized = false, clientFocused, serverFocused, useNetty = false;
 
     private String user; // имя пользователя
     private int dragSrc; // панель-источник перетаскивания: 0=клиент, 1=сервер
 
     // цикл обработки ответов сервера на запросы/команды
     private void readLoop() {
+        long restSize = -1;
         try {
             while (true) {
                 String cmd = network.read();
@@ -197,31 +211,87 @@ public class NeStController implements Initializable {
                                             } else
                                                 srvCtrl.setServerFolder(null);
                                             if (correct)
-                                                srvCtrl.updateFilesList(folder);
+                                                srvCtrl.updateServerFilesList(folder);
                                             else
                                                 Messages.displayErrorFX(Prefs.ErrorCode.ERR_WRONG_LIST.ordinal(), "");
                                         }
                                         break;
-                                    case Prefs.COM_UPLOAD: onUploaded(); break;
-                                    case Prefs.COM_DOWNLOAD: onDownloaded(); break;
-                                    case Prefs.COM_REMOVE: onRemoved();
+                                    case Prefs.COM_UPLOAD:
+                                        int id = Integer.parseInt(arg[2]);
+                                        if (id == Prefs.SRV_SUCCESS)
+                                            onUploaded();
+                                        else {
+                                            byte[] buf = new byte[Prefs.BUF_SIZE];
+                                            //TODO: синхронизировать отправку следующего пакета
+                                            // с получением отклика сервера на предыдущий
+                                            try (BufferedInputStream bis = new BufferedInputStream(
+                                                    Files.newInputStream(
+                                                            Paths.get(Paths.get(cliCtrl.getCurPath(),
+                                                                    cliCtrl.getSelectedFilename()).toString())),
+                                                            Prefs.BUF_SIZE)) {
+                                                    int bytesRead;
+                                                    while ((bytesRead = bis.read(buf)) > 0)
+                                                        sendCmdOrRequest(Prefs.getCommand(Prefs.COM_UPLOAD_DATA,
+                                                            id+"", bytesRead+"",
+                                                                Base64.getEncoder().encodeToString(buf)));
+                                            } catch (Exception ex) { ex.printStackTrace(); }
+                                        }
+                                        break;
+                                    case Prefs.COM_DOWNLOAD:
+                                        long size = Long.parseLong(arg[2]);
+                                        if (size == 0) {
+                                            if (restSize > 0)
+                                                onFailed(Prefs.COM_DOWNLOAD,
+                                                        Prefs.ErrorCode.ERR_CANNOT_COMPLETE.ordinal(),
+                                                        false);
+                                        } else {
+                                            if (restSize < 0) {
+                                                restSize = srvCtrl.filesTable
+                                                        .getSelectionModel().getSelectedItem().getSize();
+                                            }
+                                            byte[] buf = Arrays.copyOf(Base64.getDecoder().decode(arg[3]),(int)size);
+                                            //TODO: синхронизировать получение текущего пакета
+                                            // с отправкой сервером следующего
+                                            boolean success = true;
+                                            try (BufferedOutputStream bos = new BufferedOutputStream(
+                                                    new FileOutputStream(Paths.get(cliCtrl.getCurPath(),
+                                                            srvCtrl.getSelectedFilename()).toString(),
+                                                            true), Prefs.BUF_SIZE)) {
+                                                bos.write(buf, 0, (int)size);
+                                            } catch (Exception ex) {
+                                                ex.printStackTrace();
+                                                success = false;
+                                            }
+                                            if (success) {
+                                                if ((restSize -= size) < 0) restSize = 0;
+                                                if (restSize == 0) {
+                                                    restSize = -1L;
+                                                    onDownloaded();
+                                                }
+                                            }
+                                        }
+                                        break;
+                                    case Prefs.COM_REMOVE: onRemoved(); break;
+                                    case Prefs.COM_EXISTS:
+                                        size = Long.parseLong(arg[2]);
+                                        if (size >= -1)
+                                            Platform.runLater(() -> {
+                                                if (getReplaceConfirmation(size >= 0,
+                                                        cliCtrl.getSelectedFilename()))
+                                                    upload(true);
+                                            });
+                                        else
+                                            upload(true);
                                 }
                             }
                         }
                         // обработать ошибки при выполнении команд/запросов
                         if (cmd.startsWith(Prefs.getCommand(Prefs.SRV_REFUSE))) {
-                            String[] response = cmd.split(" ", 4);
+                            String[] response = cmd.split(" ", 3);
                             int errCode;
                             try { errCode = Integer.parseInt(response[1]); }
                             catch (Exception ex) { errCode = Prefs.ErrorCode.ERR_INTERNAL_ERROR.ordinal(); }
-                            if (errCode == Prefs.CONFIRM_OVERWRITE)
-                                Platform.runLater(() -> {
-                                    if (getReplaceConfirmation(response[3].equals("1"),
-                                            Prefs.decodeSpaces(response[2])))
-                                        upload(true);
-                                });
-                            else
-                                onFailed(response.length == 3 ? response[2] : "", errCode);
+                            onFailed(response.length == 3 ? response[2] : "", errCode, false);
                         }
                     }
                 }
@@ -231,6 +301,7 @@ public class NeStController implements Initializable {
 
     // цикл обработки ответов Netty-сервера на запросы/команды
     private void readLoopNetty() {
+        long restSize = -1L;
         try {
             while (true) {
                 CloudMessage message = nettyNetwork.read();
@@ -289,10 +360,10 @@ public class NeStController implements Initializable {
 */
                         boolean correct = true;
                         int l = files.getEntriesCount();
-                        String folder = files.getFolder();
                         if (l > 0) {
                             List<String> list = new ArrayList<>(Arrays.asList(files.getEntries().split("\n")));
                             correct = list.size() > 0 && l == list.size();
+                            System.out.println(l+"="+correct);
                             if (correct) {
                                 List<FileInfo> fi = new ArrayList<>();
                                 int i = 0;
@@ -315,31 +386,71 @@ public class NeStController implements Initializable {
                         } else
                             srvCtrl.setServerFolder(null);
                         if (correct)
-                            srvCtrl.updateFilesList(folder);
+                            srvCtrl.updateServerFilesList(files.getFolder().toString());
                     } else
                         Messages.displayErrorFX(Prefs.ErrorCode.ERR_WRONG_LIST.ordinal(), "");
                 }
                 // запрос копирования с клиента на сервер
                 if (message instanceof UploadResponse) {
                     UploadResponse upload = (UploadResponse)message;
-                    if (upload.getErrCode() < 0)
-                        onUploaded();
-                    else
-                        if (upload.getErrCode() == Prefs.CONFIRM_OVERWRITE)
-                            Platform.runLater(() -> {
-                                if (getReplaceConfirmation(upload.isFile(), upload.getEntry()))
-                                    upload(true);
-                        });
-                        else
-                            onFailed(Prefs.COM_UPLOAD, upload.getErrCode());
+                    if (upload.getErrCode() < 0) {
+                        int id = upload.getId();
+                        if (id == Prefs.SRV_SUCCESS)
+                            onUploaded();
+                        else {
+                            byte[] buf = new byte[Prefs.BUF_SIZE];
+                            //TODO: синхронизировать отправку следующего пакета
+                            // с получением отклика сервера на предыдущий
+                            try (BufferedInputStream bis = new BufferedInputStream(
+                                    Files.newInputStream(
+                                            Paths.get(Paths.get(cliCtrl.getCurPath(),
+                                                    cliCtrl.getSelectedFilename()).toString())),
+                                    Prefs.BUF_SIZE)) {
+                                int bytesRead;
+                                while ((bytesRead = bis.read(buf)) > 0)
+                                    sendCmdOrRequestNetty(new UploadDataRequest(id, bytesRead, buf));
+                            } catch (Exception ex) {
+                                ex.printStackTrace();
+                            }
+                        }
+                    } else
+                        onFailed(Prefs.COM_UPLOAD, upload.getErrCode(), false);
                 }
                 // запрос копирования с сервера на клиент
                 if (message instanceof DownloadResponse) {
                     DownloadResponse download = (DownloadResponse)message;
-                    if (download.getErrCode() < 0)
-                        onDownloaded();
-                    else
-                        onFailed(Prefs.COM_DOWNLOAD, download.getErrCode());
+                    if (download.getSize() > 0) {
+                        if (restSize < 0)
+                            restSize = srvCtrl.filesTable
+                                    .getSelectionModel().getSelectedItem().getSize();
+                        restSize -= download.getSize();
+                        byte[] buf = Arrays.copyOf(download.getData(), download.getSize());
+                        boolean success = true;
+                        try (BufferedOutputStream bos = new BufferedOutputStream(
+                                new FileOutputStream(Paths.get(cliCtrl.getCurPath(),
+                                        srvCtrl.getSelectedFilename()).toString(),
+                                        true), Prefs.BUF_SIZE)) {
+                            bos.write(buf, 0, download.getSize());
+                        } catch (Exception ex) {
+                            ex.printStackTrace();
+                            success = false;
+                        }
+                        if (success) {
+                            if ((restSize -= download.getSize()) < 0) restSize = 0;
+                            if (restSize == 0) {
+                                restSize = -1L;
+                                onDownloaded();
+                            }
+                        }
+                        if (restSize == 0) {
+                            restSize = -1L;
+                            onDownloaded();
+                        }
+                    } else
+                        if (restSize > 0)
+                            onFailed(Prefs.COM_DOWNLOAD,
+                                    Prefs.ErrorCode.ERR_CANNOT_COMPLETE.ordinal(),
+                                    false);
                 }
                 // запрос удаления в пользовательской папке
                 if (message instanceof RemovalResponse) {
@@ -347,7 +458,19 @@ public class NeStController implements Initializable {
                     if (rm.getErrCode() < 0)
                         onRemoved();
                     else
-                        onFailed(Prefs.COM_REMOVE, rm.getErrCode());
+                        onFailed(Prefs.COM_REMOVE, rm.getErrCode(), false);
+                }
+                // запрос на проверку существования файла/папки в пользовательской папке
+                if (message instanceof ExistsResponse) {
+                    ExistsResponse er = (ExistsResponse)message;
+                    if (er.getExists() >= -1)
+                        Platform.runLater(() -> {
+                            if (getReplaceConfirmation(er.getExists() >= 0,
+                                    cliCtrl.getSelectedFilename()))
+                                upload(true);
+                        });
+                    else
+                        upload(true);
                 }
             }
         } catch (Exception ex) { System.err.println("Connection lost"); ex.printStackTrace(); }
@@ -408,15 +531,6 @@ public class NeStController implements Initializable {
             sendCmdOrRequest(Prefs.getCommand(Prefs.COM_GET_FILES, folder));
     }
 
-    // запрос свободного места в пользовательской папке
-    void requestFreeSpace() {
-        System.out.println("requesting free space");
-        if (useNetty)
-            sendCmdOrRequestNetty(new SpaceRequest());
-        else
-            sendCmdOrRequest(Prefs.getCommand(Prefs.COM_GET_SPACE));
-    }
-
     // запрос на удаление файла/папки
     void removeEntry(String name) {
         System.out.println("requesting removal");
@@ -427,11 +541,8 @@ public class NeStController implements Initializable {
     }
 
     // проверка существования файла/папки в текущей папке на сервере/клиенте
-    // NB: в ФС семейств FAT и NTFS регистр символов в именах файлов не важен,
-    //     в ФС, используемых семейством ОС Unix - ext, ext2, ext3...  - он имеет значение
-    //     поэтому не всегда есть гарантия, что выбранный в одном списке файл
-    //     отстуствует и в другом - в случае, например, файлов ABC.txt и abc.txt
-    //     по возможности, наличие файла нужно проверять локально, используя сервис ФС
+    // гарантирует только то, что существует (отстутсвует) файл/папка
+    // точно с таким же именем - с учетом регистра символов в нем
     int checkPresence(boolean atServer) {
         List<FileInfo> list = (atServer ? srvCtrl : cliCtrl).filesTable.getItems();
         if (list != null && list.size() > 0) {
@@ -448,7 +559,6 @@ public class NeStController implements Initializable {
             else
                 if (!atServer) {
                     Path p = Paths.get(cliCtrl.getCurPath(), srvCtrl.getSelectedFilename());
-                    System.out.println(Files.exists(p)+" "+!Files.isDirectory(p));
                     if (Files.exists(p))
                         return Files.isDirectory(p) ? 1 : 0;
                 }
@@ -475,18 +585,40 @@ public class NeStController implements Initializable {
     // отправка запроса
     private void upload(boolean replace) {
         System.out.println("requesting upload");
-        // /upload source_path destination_path size [date]
+        // /upload source_name destination_path size [date]
         //TODO: при копировании больших файлов следовало бы отображать индикатор копирования
         String dst = Prefs.encodeSpaces(Paths.get(srvCtrl.getCurPath()).toString());
         if (dst.length() == 0) dst = useNetty ? "" : ".";
         FileInfo fi = cliCtrl.filesTable.getSelectionModel().getSelectedItem();
         if (useNetty)
-            sendCmdOrRequestNetty(new UploadRequest(cliCtrl.getFullSelectedFilename(),
-                    dst, fi.getSize(), fi.getModifiedAsLong(), replace));
+            if (replace)
+                sendCmdOrRequestNetty(new UploadRequest(cliCtrl.getSelectedFilename(),
+                    dst, fi.getSize(), fi.getModifiedAsLong()));
+            else
+                sendCmdOrRequestNetty(new ExistsRequest(cliCtrl.getSelectedFilename()));
         else
-            sendCmdOrRequest(Prefs.getCommand(Prefs.COM_UPLOAD,
-                    Prefs.encodeSpaces(cliCtrl.getFullSelectedFilename()),
-                    dst, fi.getSize()+"", fi.getModifiedAsLong()+"", (replace ? Prefs.COM_OPTION_OVERWRITE : "")));
+            if (replace)
+                sendCmdOrRequest(Prefs.getCommand(Prefs.COM_UPLOAD,
+                    Prefs.encodeSpaces(cliCtrl.getSelectedFilename()),
+                    dst, fi.getSize()+"", fi.getModifiedAsLong()+""));
+            else
+                sendCmdOrRequest(Prefs.getCommand(Prefs.COM_EXISTS,
+                        Prefs.encodeSpaces(cliCtrl.getSelectedFilename())));
+    }
+
+    // файлы нулевого размера и папки создает клиентское приложение
+    // TODO: оценить взаимозаменяемость Prefs.ResetFile
+    private boolean makeFolderOrZero(Path dst, long size) {
+        if (size == 0)
+            try {
+                Files.write(dst, new byte[]{});
+                return true;
+            } catch (Exception ex) {
+                ex.printStackTrace();
+                return false;
+            }
+        else
+            return new File(dst.toString()).mkdir();
     }
 
     // запрос на копирование файла/папки с сервера
@@ -494,33 +626,58 @@ public class NeStController implements Initializable {
     // наличия одноименного элемента в папке назначения,
     // в случае наличия выводится запрос на замену
     @FXML void tryDownload() {
-        int entryType = checkPresence(false);
-        if (entryType < 0)
-            download();
-        else {
-            String name = srvCtrl.filesTable.getSelectionModel().getSelectedItem().getFilename();
-            Platform.runLater(() -> {
-                if (getReplaceConfirmation(entryType == 0, name)) download();
-            });
-        }
+        int entryType = checkPresence(false),
+            srcType = srvCtrl.filesTable.getSelectionModel().getSelectedItem().getSize() < 0 ? 1 : 0;
+        long size = srvCtrl.filesTable.getSelectionModel().getSelectedItem().getSize();
+        String name = srvCtrl.filesTable.getSelectionModel().getSelectedItem().getFilename();
+        Path dst = Paths.get(cliCtrl.getCurPath(), name);
+        if (size > 0) { // ненулевой файл
+            if (entryType == 0)
+                Platform.runLater(() -> {
+                    if (getReplaceConfirmation(true, name)) {
+                        Prefs.resetFile(dst);
+                        download();
+                    }
+                });
+            else
+                if (entryType < 0)
+                    download();
+                else
+                    onFailed(Prefs.COM_DOWNLOAD, Prefs.ErrorCode.ERR_WRONG_REPLACEMENT.ordinal(), true);
+        } else // нулевой файл или папка
+            if (entryType < 0) {
+                if (makeFolderOrZero(dst, size))
+                    onDownloaded();
+                else
+                    onFailed(Prefs.COM_DOWNLOAD, Prefs.ErrorCode.ERR_CANNOT_COMPLETE.ordinal(), false);
+            } else {
+                if (entryType != srcType) {
+                    onFailed(Prefs.COM_DOWNLOAD, Prefs.ErrorCode.ERR_WRONG_REPLACEMENT.ordinal(), true);
+                    return;
+                }
+                Platform.runLater(() -> {
+                    try {
+                        if (getReplaceConfirmation(entryType == 0, name))
+                            if (Files.size(dst) == 0 || makeFolderOrZero(dst, size))
+                                onDownloaded();
+                            else
+                                onFailed(Prefs.COM_DOWNLOAD, Prefs.ErrorCode.ERR_CANNOT_COMPLETE.ordinal(), false);
+                    } catch (Exception ex) { ex.printStackTrace(); }
+                });
+            }
     }
 
     // отправка запроса
     private void download() {
         System.out.println("requesting download");
-        // /download server_source_path destination_path size [date]
+        // /download source_path
         //TODO: при копировании больших файлов следовало бы отображать индикатор копирования
         FileInfo fi = srvCtrl.filesTable.getSelectionModel().getSelectedItem();
         if (useNetty)
-            sendCmdOrRequestNetty(new DownloadRequest(
-                    srvCtrl.getFullSelectedFilename(),
-                    cliCtrl.getCurPath(),
-                    fi.getSize(), fi.getModifiedAsLong()));
+            sendCmdOrRequestNetty(new DownloadRequest(srvCtrl.getFullSelectedFilename()));
         else
             sendCmdOrRequest(Prefs.getCommand(Prefs.COM_DOWNLOAD,
-                    Prefs.encodeSpaces(srvCtrl.getFullSelectedFilename()),
-                    Prefs.encodeSpaces(cliCtrl.getCurPath()),
-                    fi.getSize()+"", fi.getModifiedAsLong()+""));
+                    Prefs.encodeSpaces(srvCtrl.getSelectedFilename())));
     }
 
     /*
@@ -657,8 +814,11 @@ public class NeStController implements Initializable {
     }
 
     void onDownloaded() {
-        // обновить список файлов клиента после успешной передачи
+        // установить дату и время последней модификации скопированного элемента как у оригинала
+        // и обновить список файлов клиента после успешной передачи
         Platform.runLater(() -> {
+            new File(Paths.get(cliCtrl.getCurPath(), srvCtrl.getSelectedFilename()).toString())
+                    .setLastModified(srvCtrl.filesTable.getSelectionModel().getSelectedItem().getModifiedAsLong());
             cliCtrl.updateFilesList(Paths.get(cliCtrl.getCurPath()));
             Messages.displayInfo("Downloaded successfully", "Downloading completed");
         });
@@ -674,13 +834,13 @@ public class NeStController implements Initializable {
     /*
        обработать ошибки копирования и удаления
     */
-    void onFailed(String cmd, int errCode) {
+    void onFailed(String cmd, int errCode, boolean wrongOp) {
         int opCode = 0;
         String errMsg = Prefs.errMessage[errCode], title = "";
         // при неудачном копировании файла/папки вывести вопрос на повтор операции;
         // при ошибке удаления вывести соответствующее сообщение
-        if (cmd.equals(Prefs.COM_UPLOAD) && !menuItemUpload.isDisable()) opCode = 1;
-        if (cmd.equals(Prefs.COM_DOWNLOAD) && !menuItemDownload.isDisable()) opCode = 2;
+        if (cmd.equals(Prefs.COM_UPLOAD) && !menuItemUpload.isDisable() && !wrongOp) opCode = 1;
+        if (cmd.equals(Prefs.COM_DOWNLOAD) && !menuItemDownload.isDisable() &&!wrongOp) opCode = 2;
         if (cmd.equals(Prefs.COM_REMOVE)) title = Prefs.ERR_CANNOT_REMOVE;
         // при медленном соединении операция передачи может выполняться какое-то время,
         // за которое пользователь может изменить выбор файла/папки в списке,
