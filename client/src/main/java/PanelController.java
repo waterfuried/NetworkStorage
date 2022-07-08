@@ -43,7 +43,6 @@ public class PanelController implements Initializable {
         disks.setVisible(false);
         btnLevelUp.setDisable(true);
         btnGoBack.setDisable(true);
-        updateFreeSpace(Prefs.MAXSIZE);
         setCurPath("");
         if (prevPath != null) prevPath.clear();
         btnGoBack.setDisable(true);
@@ -75,7 +74,7 @@ public class PanelController implements Initializable {
         }
     }
 
-    void updateFilesList(String path) {
+    void updateServerFilesList(String path) {
         // отображение дубликатов в столбцах -- всего лишь один из частых глюков с TableView,
         // другой заключается в невозможности доступа к значениям ячеек отображаемых столбцов
         refreshCurPath(path);
@@ -156,7 +155,7 @@ public class PanelController implements Initializable {
     String getCurPath() { return curPath.getText(); }
     void setCurPath(String path) {
         refreshCurPath(path);
-        if (serverMode) updateFilesList(path); else updateFilesList(Paths.get(path));
+        if (serverMode) updateServerFilesList(path); else updateFilesList(Paths.get(path));
     }
 
     String getFullSelectedFilename() {

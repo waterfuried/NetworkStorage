@@ -4,6 +4,7 @@ import authService.*;
 import java.io.*;
 import java.net.Socket;
 import java.nio.file.*;
+import java.util.*;
 import java.util.stream.*;
 
 public class ClientHandler implements Runnable {
@@ -13,6 +14,8 @@ public class ClientHandler implements Runnable {
     private long freeSpace;
     private Path userFolder;
     private final EventLogger logger;
+    private final ArrayList<TransferOp> transfer = new ArrayList<>();
+    private String uploadTarget;
 
     public Path getUserFolder() { return userFolder; }
 
@@ -75,12 +78,24 @@ public class ClientHandler implements Runnable {
         sendResponse(Prefs.getCommand(Prefs.SRV_REFUSE, param));
     }
 
+    private int startTransfer(String path, long oldSize, long newSize, long modified) {
+        int id = 0;
+        if (transfer.size() > 0)
+            while (id < transfer.size() && transfer.get(id) != null) id++;
+        if (id == transfer.size())
+            transfer.add(new TransferOp(path, oldSize, newSize, modified));
+        else
+            transfer.set(id, new TransferOp(path, oldSize, newSize, modified));
+        return id;
+    }
+
     // обработка команд/запросов клиента
     @Override public void run() {
         try {
             while (true) {
                 String cmd = is.readUTF();
-                System.out.println("received: " + cmd);
+                System.out.println("received: "+
+                        (cmd.length() <= Prefs.SHOWABLE_SIZE ? cmd : cmd.substring(0, Prefs.SHOWABLE_SIZE)));
                 if (cmd.startsWith(Prefs.COM_ID)) {
                     // s - только для обработки команд, регистр в ее аргументах важен - для них cmd
                     String s = cmd.toLowerCase();
@@ -172,103 +187,116 @@ public class ClientHandler implements Runnable {
                     }
                     // запрос количества свободного места в папке пользователя
                     if (s.startsWith(Prefs.getCommand(Prefs.COM_GET_SPACE))) sendFreeSpace();
-                    // /upload source_path destination_path size [date] [overwrite]
+                    // /upload source_path destination_path size [date]
                     // "." for root destination
                     if (s.startsWith(Prefs.getCommand(Prefs.COM_UPLOAD))) {
-                        String[] arg = cmd.split(" ", 6);
-                        long size = 0L;
-                        try { size = Long.parseLong(arg[3]); }
-                        catch (Exception ex) { logger.logError(ex); }
-                        int overWrite = -1;
-                        String modified = null;
-                        if (arg.length >= 5) {
-                            String option = null;
-                            if (arg.length == 6) {
-                                if (Prefs.isValidOption(arg[5])) option = arg[5];
-                                modified = arg[4];
-                            } else
-                                if (Prefs.isValidOption(arg[4])) option = arg[4];
-                            if (option != null && option.equals(Prefs.COM_OPTION_OVERWRITE)) overWrite = 1;
-                        }
-                        arg[1] = Prefs.decodeSpaces(arg[1]);
-                        if (arg[2].equals(".")) arg[2] = "";
-                        String src = Paths.get(arg[1]).toString(),
-                               entry = arg[1].substring(arg[1].lastIndexOf(File.separatorChar)+1);
-                        Path dst = getUserFolder().resolve(Prefs.decodeSpaces(arg[2])).resolve(entry);
-                        // перед выполнением проверять наличие файла и достаточного свободного места
-                        long oldSize = 0L; // добавление нового файла/папки
-                        boolean exists = Files.exists(dst);
-                        if (exists)
-                            if (overWrite < 0)
-                                sendResponse(Prefs.getCommand(Prefs.SRV_REFUSE,
-                                        Prefs.CONFIRM_OVERWRITE + "",
-                                        Prefs.encodeSpaces(entry), Files.isDirectory(dst) ? "0" : "1"));
-                            else
-                                oldSize = Files.size(dst); // замена существующего файла/папки
-                        else
-                            overWrite = 0;
-                        if (overWrite >= 0) {
-                            if (size >= 0 && size >= oldSize && freeSpace-(size-oldSize) <= 0)
-                                sendOpFailedResponse(Prefs.ErrorCode.ERR_OUT_OF_SPACE.ordinal());
-                            else {
-                                boolean isFile = exists ? !Files.isDirectory(dst) : size >= 0,
-                                        success = (isFile && size >= 0) || (!isFile && size < 0);
-                                if (success)
-                                    if (size >= 0) { // файл
-                                        Prefs.doCopying(src, dst.toString());
-                                        success = Files.size(dst) == size;
-                                    } else // папка
-                                        success = new File(dst.toString()).mkdir();
-                                if (success) {
-                                    freeSpace -= size-oldSize;
-                                    // установить дату и время последней модификации как у оригинала
-                                    if (modified != null)
-                                        try {
-                                            FileInfo fi = new FileInfo(dst);
-                                            fi.setModified(modified);
-                                            // если по какой-то причине дату/время применить не удалось,
-                                            // считать это неудачей всей операции в целом не стоит
-                                            new File(dst.toString()).setLastModified(fi.getModifiedAsLong());
-                                        } catch (NumberFormatException ex) { logger.logError(ex); }
-                                    sendResponse(Prefs.getCommand(Prefs.SRV_ACCEPT,
-                                            Prefs.COM_UPLOAD, Prefs.SRV_SUCCESS+""));
-                                    sendFreeSpace();
-                                    sendFilesList(arg[2].length() == 0 ? "." : arg[2]);
-                                } else
-                                    sendOpFailedResponse(Prefs.ErrorCode.ERR_CANNOT_COMPLETE+"",
-                                            Prefs.COM_UPLOAD);
-                            }
-                        }
-                    }
-                    // /download server_source_path destination_path size [date]
-                    if (s.startsWith(Prefs.getCommand(Prefs.COM_DOWNLOAD))) {
                         String[] arg = cmd.split(" ", 5);
                         long size = 0L;
                         try { size = Long.parseLong(arg[3]); }
                         catch (Exception ex) { logger.logError(ex); }
+                        long modified = arg.length > 4 ? Long.parseLong(arg[4]) : 0L;
                         arg[1] = Prefs.decodeSpaces(arg[1]);
-                        String src = getUserFolder().resolve(arg[1]).toString(),
-                               dst = Prefs.decodeSpaces(Paths.get(arg[2], arg[1].substring(arg[1]
-                                       .lastIndexOf(File.separatorChar)+1)).toString());
-                        boolean isFile = !new File(dst).isDirectory(),
-                                success = (isFile && size >= 0) || (!isFile && size < 0);
-                        if (success)
-                            if (size >= 0) { // файл
-                                Prefs.doCopying(src, dst);
-                                success = new File(dst).length() == size;
-                            } else // папка
-                                success = new File(dst).mkdir();
-                        // установить дату и время последней модификации как у оригинала
-                        if (success && arg.length == 5)
-                            try {
-                                FileInfo fi = new FileInfo(Paths.get(dst));
-                                fi.setModified(arg[4]);
-                                new File(dst).setLastModified(fi.getModifiedAsLong());
-                            } catch (NumberFormatException ex) { logger.logError(ex); }
-                        sendResponse(success
-                            ? Prefs.getCommand(Prefs.SRV_ACCEPT, Prefs.COM_DOWNLOAD, Prefs.SRV_SUCCESS+"")
-                            : Prefs.getCommand(Prefs.SRV_REFUSE, Prefs.ErrorCode.ERR_CANNOT_COMPLETE+"",
-                                Prefs.COM_DOWNLOAD));
+                        uploadTarget = arg[2].equals(".") ? "" : Prefs.decodeSpaces(arg[2]);
+                        Path dst = getUserFolder().resolve(uploadTarget).resolve(arg[1]);
+                        // перед выполнением проверять наличие файла и достаточного свободного места
+                        int id = 0, errCode = -1;
+                        long oldSize = 0L;
+                        boolean updateModified = false, checkSpace = false;
+                        if (Files.exists(dst)) {
+                            oldSize = Files.isDirectory(dst) ? -1L : Files.size(dst);
+                            if (size > 0L)
+                                checkSpace = true;
+                            else {
+                                updateModified = oldSize <= 0L;
+                                if (oldSize > 0L)
+                                    if (Prefs.resetFile(dst)) {
+                                        updateModified = true;
+                                        freeSpace += oldSize;
+                                    } else
+                                        errCode = Prefs.ErrorCode.ERR_CANNOT_COMPLETE.ordinal();
+                            }
+                        } else
+                            if (size <= 0L)
+                                if (size < 0L ? new File(dst.toString()).mkdir() : Prefs.resetFile(dst))
+                                    updateModified = true;
+                                else
+                                    errCode = Prefs.ErrorCode.ERR_CANNOT_COMPLETE.ordinal();
+                            else
+                                checkSpace = true;
+                        if (errCode < 0) {
+                            if (checkSpace)
+                                if (freeSpace-(size-oldSize) <= 0L)
+                                    errCode = Prefs.ErrorCode.ERR_OUT_OF_SPACE.ordinal();
+                                else
+                                    id = 1+startTransfer(dst.toString(), oldSize, size, modified);
+                            // обновление даты и времени происходит только для папок и пустых файлов,
+                            // если по какой-то причине оно не произошло, операция в целом не выполнена
+                            if (updateModified && modified > 0
+                                    && !new File(dst.toString()).setLastModified(modified))
+                                errCode = Prefs.ErrorCode.ERR_CANNOT_COMPLETE.ordinal();
+                        }
+                        if (errCode < 0) {
+                            sendResponse(Prefs.getCommand(Prefs.SRV_ACCEPT,
+                                    Prefs.COM_UPLOAD, (id > 0 ? id : Prefs.SRV_SUCCESS) + ""));
+                            if (id == 0 && (size < 0 || size != oldSize || updateModified)) {
+                                if (size != oldSize) sendFreeSpace();
+                                sendFilesList(arg[2]);
+                            }
+                        } else
+                            sendOpFailedResponse(errCode+"", Prefs.COM_UPLOAD);
+                    }
+                    // /upld id block_size data_block
+                    if (s.startsWith(Prefs.getCommand(Prefs.COM_UPLOAD_DATA))) {
+                        String[] arg = cmd.split(" ", 4);
+                        int id = Integer.parseInt(arg[1])-1;
+                        long size = Long.parseLong(arg[2]);
+                        byte[] buf = Arrays.copyOf(Base64.getDecoder().decode(arg[3]),arg[3].length());
+                        // при использовании любых стандартных однобайтных кодировок
+                        // происходит преобразование символов - старше 127 кодируются в другие,
+                        // UTF-8 кодирует символы до 128 одним байтом, со 128 - двумя
+                        //byte[] buf = Arrays.copyOf(arg[3].getBytes(StandardCharsets.US_ASCII),arg[3].length());
+                        String dst = transfer.get(id).getPath();
+                        boolean success = true;
+                        try (BufferedOutputStream bos = new BufferedOutputStream(
+                                 new FileOutputStream(dst, true), Prefs.BUF_SIZE)) {
+                            bos.write(buf, 0, (int)size);
+                        } catch (Exception ex) {
+                            ex.printStackTrace();
+                            success = false;
+                        }
+                        if (success) {
+                            transfer.get(id).setReceived(transfer.get(id).getReceived()+size);
+                            if (transfer.get(id).getReceived() == transfer.get(id).getNewSize()) {
+                                // установить дату и время последней модификации как у оригинала
+                                if (transfer.get(id).getModified() > 0)
+                                    try { new File(dst).setLastModified(transfer.get(id).getModified()); }
+                                    catch (NumberFormatException ex) { logger.logError(ex); }
+                                size = transfer.get(id).getNewSize();
+                                long oldSize = transfer.get(id).getOldSize();
+                                freeSpace -= size-oldSize;
+                                transfer.remove(id);
+                                sendResponse(Prefs.getCommand(Prefs.SRV_ACCEPT,
+                                        Prefs.COM_UPLOAD, Prefs.SRV_SUCCESS+""));
+                                if (size != oldSize) sendFreeSpace();
+                                sendFilesList(uploadTarget.length() == 0 ? "." : uploadTarget);
+                            }
+                        } else
+                            sendOpFailedResponse(Prefs.ErrorCode.ERR_CANNOT_COMPLETE+"",
+                                    Prefs.COM_UPLOAD);
+                    }
+                    // только отправка файлов ненулевого размера
+                    // /download source_path// destination_path//size [date]
+                    if (s.startsWith(Prefs.getCommand(Prefs.COM_DOWNLOAD))) {
+                        String[] arg = cmd.split(" ", 2);
+                        arg[1] = Prefs.decodeSpaces(arg[1]);
+                        byte[] buf = new byte[Prefs.BUF_SIZE];
+                        try (BufferedInputStream bis = new BufferedInputStream(
+                                Files.newInputStream(getUserFolder().resolve(arg[1])), Prefs.BUF_SIZE)) {
+                            int bytesRead;
+                            while ((bytesRead = bis.read(buf)) > 0)
+                                sendResponse(Prefs.getCommand(Prefs.SRV_ACCEPT, Prefs.COM_DOWNLOAD,
+                                                bytesRead+"", Base64.getEncoder().encodeToString(buf)));
+                        } catch (Exception ex) { ex.printStackTrace(); }
                     }
                     // /remove entry_name
                     if (s.startsWith(Prefs.getCommand(Prefs.COM_REMOVE))) {
@@ -293,6 +321,21 @@ public class ClientHandler implements Runnable {
                             sendFilesList(i < 0 ? "." : arg[1].substring(0, i));
                         } else
                             sendOpFailedResponse(errCode+"", Prefs.COM_REMOVE);
+                    }
+                    // /exists entry_name
+                    // возвращает
+                    //     - истинный размер элемента, если он существует (-1 для папок, 0+ для файлов)
+                    //     - -2, если элемент не существует
+                    if (s.startsWith(Prefs.getCommand(Prefs.COM_EXISTS))) {
+                        String[] arg = cmd.split(" ", 2);
+                        if (arg.length == 2) {
+                            Path dst = getUserFolder().resolve(Prefs.decodeSpaces(arg[1]));
+                            sendResponse(
+                                Prefs.getCommand(Prefs.SRV_ACCEPT, Prefs.COM_EXISTS,
+                                    (Files.exists(dst)
+                                        ? Files.isDirectory(dst) ? -1L : Files.size(dst)
+                                        : -2L)+""));
+                        }
                     }
                 }
             }

@@ -29,7 +29,7 @@
       <TextField fx:id="usernameField" promptText="user name" visible="false" GridPane.columnIndex="2" GridPane.rowIndex="3" onAction="#register"/>
    </GridPane>
 
-  <TextArea fx:id="textArea" editable="false" VBox.vgrow="ALWAYS" />
+  <TextArea fx:id="textArea" editable="false" VBox.vgrow="ALWAYS" focusTraversable="false" />
   <HBox fx:id="buttonContainer" alignment="CENTER" prefHeight="24.0" prefWidth="478.0">
       <Button fx:id="btnAuth" disable="true" onAction="#authorize" text="authorize" />
   </HBox>
