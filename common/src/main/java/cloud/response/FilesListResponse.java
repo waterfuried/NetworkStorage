@@ -16,11 +16,10 @@ import java.util.stream.Stream;
  * ответ на запрос списка файлов и папок в папке пользователя на сервере
  * возвращает код ошибки, если указанный путь в папке не существует
  * TODO: по непонятной причине этот ответ не обрабатывается (его нет среди полученных ответов)
- *       в клиентском цикле чтения ответов сервера, если список файлов отправлять не строкой,
- *       а именно списком из элементов FileInfo
+ *       в клиентском цикле чтения ответов сервера
  */
 public class FilesListResponse implements CloudMessage {
-    private String/*List<FileInfo>*/ entries;
+    private List<FileInfo> entries;
     private final Path folder;
     private int entriesCount, errCode;
 
@@ -30,13 +29,9 @@ public class FilesListResponse implements CloudMessage {
         try (Stream<Path> pathStream = Files.list(folder)) {
             entries = pathStream
                     .map(FileInfo::new)
-                    //при составлении списка из FileInfo эта строка, естественно, убирается
-                    .map(fi -> fi.getFilename() + ":" + fi.getSize() + ":" + fi.getModifiedAsLong())
-                    .collect(Collectors.joining("\n"));
-            //.collect(Collectors.toList());
-            entriesCount = entries.split("\n").length;
-            //entriesCount = entries.size();
-            if (entriesCount == 1 && entries./*get(0).getFilename().*/length() == 0) entriesCount = 0;
+                    .collect(Collectors.toList());
+            entriesCount = entries.size();
+            if (entriesCount == 1 && entries.get(0).getFilename().length() == 0) entriesCount = 0;
         } catch (IOException ex) {
             errCode = Prefs.ErrorCode.ERR_NO_SUCH_FILE.ordinal();
             ex.printStackTrace();
@@ -44,7 +39,7 @@ public class FilesListResponse implements CloudMessage {
         System.out.println("folder='"+folder+"' err="+errCode+" count="+entriesCount+" list="+entries);
     }
 
-    public /*List<FileInfo>*/String getEntries() { return entries; }
+    public List<FileInfo> getEntries() { return entries; }
     public int getErrCode() { return errCode; }
     public int getEntriesCount() { return entriesCount; }
     public Path getFolder() { return folder; }

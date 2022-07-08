@@ -173,8 +173,7 @@ public class Prefs {
 
     public static boolean resetFile(Path dst) {
         try {
-            Files.write(dst, new byte[]{},
-                    StandardOpenOption.TRUNCATE_EXISTING);
+            Files.write(dst, new byte[]{}); // обнулить файл, если он существует, иначе создать новый
             return true;
         } catch (Exception ex) {
             ex.printStackTrace();

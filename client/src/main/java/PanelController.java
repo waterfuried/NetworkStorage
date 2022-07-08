@@ -43,7 +43,6 @@ public class PanelController implements Initializable {
         disks.setVisible(false);
         btnLevelUp.setDisable(true);
         btnGoBack.setDisable(true);
-        updateFreeSpace(Prefs.MAXSIZE);
         setCurPath("");
         if (prevPath != null) prevPath.clear();
         btnGoBack.setDisable(true);

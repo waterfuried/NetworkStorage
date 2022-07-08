@@ -65,11 +65,12 @@ public class CloudFileHandler extends SimpleChannelInboundHandler<CloudMessage> 
                     newUser = null;
             }
             AuthResponse r = new AuthResponse(newUser, userFolder);
-            ctx.writeAndFlush(r);
             if (newUser != null && r.getErrCode() < 0) {
-                sendFreeSpace(ctx);
+                ctx.write(r);
+                ctx.write(new SpaceResponse(freeSpace));
                 ctx.writeAndFlush(new FilesListResponse(userFolder));
-            }
+            } else
+                ctx.writeAndFlush(r);
         }
         if (cloudMessage instanceof RegRequest) {
             RegRequest reg = (RegRequest)cloudMessage;
@@ -88,11 +89,12 @@ public class CloudFileHandler extends SimpleChannelInboundHandler<CloudMessage> 
                 freeSpace = Prefs.MAXSIZE;
             }
             RegResponse r = new RegResponse(newUser, number, userFolder);
-            ctx.writeAndFlush(r);
             if (newUser != null && r.getErrCode() < 0) {
-                sendFreeSpace(ctx);
+                ctx.write(r);
+                ctx.write(new SpaceResponse(freeSpace));
                 ctx.writeAndFlush(new FilesListResponse(userFolder));
-            }
+            } else
+                ctx.writeAndFlush(r);
         }
         // запрос завершения сеанса пользователя
         if (cloudMessage instanceof LogoutRequest) {
@@ -103,9 +105,9 @@ public class CloudFileHandler extends SimpleChannelInboundHandler<CloudMessage> 
         // запрос свободного места в пользовательской папке
         if (cloudMessage instanceof SpaceRequest) {
             System.out.println("free space request");
-            // вместо выполнения запроса можно передать хранящееся во freeSpace значение
-            // при нормальных условиях, все операции передачи файлов на сервер здесь
-            // контролируются, и хранящаяся информация о свободном месте актуальна
+            // вместо выполнения запроса передать хранящееся во freeSpace значение -
+            // оно всегда актуально, поскольку обрабываются ВСЕ операции передачи
+            // и удаления файлов на сервере
             sendFreeSpace(ctx);
         }
         // запрос списка файлов/папок в пользовательской папке
@@ -116,64 +118,42 @@ public class CloudFileHandler extends SimpleChannelInboundHandler<CloudMessage> 
         }
         // запрос копирования файла/папки с клиента на сервер
         if (cloudMessage instanceof UploadRequest) {
-            UploadRequest upload = (UploadRequest)cloudMessage;
+            UploadRequest u = (UploadRequest)cloudMessage;
             System.out.println("upload request:"+
-                    "\n"+upload.getSrcPath()+
-                    "\n"+upload.getDstPath()+
-                    "\n"+upload.getSize()+
-                    "\n"+upload.getModified());
+                    "\n"+u.getSrcPath()+"\n"+u.getDstPath()+"\n"+u.getSize()+"\n"+u.getModified());
 
-            uploadTarget = upload.getDstPath();
-            // перед выполнением проверять наличие файла и достаточного свободного места
-            Path dst = userFolder.resolve(upload.getDstPath()).resolve(upload.getSrcPath());
-            boolean exists = Files.exists(dst);
-            long size = upload.getSize(), oldSize = exists ? Files.isDirectory(dst) ? -1L : Files.size(dst) : 0L;
-            int id = 0, errCode = -1;
-            if (size >= 0 && size >= oldSize && freeSpace-(size-oldSize) <= 0)
-                errCode = Prefs.ErrorCode.ERR_OUT_OF_SPACE.ordinal();
-            else {
-                boolean isFile = exists ? !Files.isDirectory(dst) : size >= 0,
-                        success = (isFile && size >= 0) || (!isFile && size < 0);
-                if (success)
-                    if (size > 0) { // файл с данными
-                        id = startTransfer(dst.toString(), (int) oldSize, (int) size, upload.getModified()) + 1;
-                        if (exists) success = Prefs.resetFile(dst);
-                    } else { // пустой файл или папка
-                        if (size < 0) success = new File(dst.toString()).mkdir();
-                        if (isFile && oldSize > 0) success = Prefs.resetFile(dst);
-                        // установить дату и время последней модификации как у оригинала
-                        if (success) {
-                            if (upload.getModified() > 0)
-                                try {
-                                    // если по какой-то причине дату/время применить не удалось,
-                                    // считать это неудачей всей операции в целом не стоит
-                                    new File(dst.toString()).setLastModified(upload.getModified());
-                                } catch (NumberFormatException ex) { ex.printStackTrace(); }
-                            freeSpace -= size-oldSize;
-                        }
-                    }
-                if (!success) errCode = Prefs.ErrorCode.ERR_CANNOT_COMPLETE.ordinal();
-                UploadResponse r = new UploadResponse(id, errCode);
+            uploadTarget = u.getDstPath();
+            Path dst = userFolder.resolve(u.getDstPath()).resolve(u.getSrcPath());
+            int id = 0;
+            UploadResponse r = new UploadResponse(dst, u.getSize(), u.getModified());
+            if (r.getErrCode() < 0) {
+                if (r.getOldSize() > 0L && u.getSize() == 0L)
+                    freeSpace += r.getOldSize();
+                else
+                    if (r.isCheckSpace() && freeSpace-(u.getSize()-r.getOldSize()) <= 0L)
+                        r.setErrCode(Prefs.ErrorCode.ERR_OUT_OF_SPACE);
+                    else
+                        r.setId(id = 1+startTransfer(dst.toString(), r.getOldSize(), u.getSize(), u.getModified()));
                 ctx.writeAndFlush(r);
-                if (success)
-                    if (id == 0 && (size < 0 || size != oldSize)) {
-                        if (size != oldSize) sendFreeSpace(ctx);
-                        ctx.writeAndFlush(new FilesListResponse(userFolder.resolve(upload.getDstPath())));
-                    }
+                if (id == 0 && (u.getSize() < 0 || u.getSize() != r.getOldSize() || r.isUpdateModified())) {
+                    if (u.getSize() != r.getOldSize()) sendFreeSpace(ctx);
+                    ctx.writeAndFlush(new FilesListResponse(userFolder.resolve(uploadTarget)));
+                }
             }
         }
         // запрос копирования файла/папки с клиента на сервер
         if (cloudMessage instanceof UploadDataRequest) {
             UploadDataRequest upload = (UploadDataRequest)cloudMessage;
 
-            int id = upload.getId()-1, size = upload.getSize(), errCode = -1, oldSize = 0;
+            int id = upload.getId()-1;
+            long size = upload.getSize(), oldSize = 0L;
             byte[] buf = upload.getData();
             String dst = transfer.get(id).getPath();
-            boolean success = true;
+            boolean success = true, error = false;
             try (
                     BufferedOutputStream bos = new BufferedOutputStream(
                             new FileOutputStream(dst, true), Prefs.BUF_SIZE)) {
-                bos.write(buf, 0, size);
+                bos.write(buf, 0, (int)size);
             } catch (Exception ex) {
                 ex.printStackTrace();
                 success = false;
@@ -191,8 +171,9 @@ public class CloudFileHandler extends SimpleChannelInboundHandler<CloudMessage> 
                     transfer.remove(id);
                 }
             } else
-                errCode = Prefs.ErrorCode.ERR_CANNOT_COMPLETE.ordinal();
-            UploadResponse r = new UploadResponse(id, errCode);
+                error = true;
+            UploadResponse r = new UploadResponse(id);
+            if (error) r.setErrCode(Prefs.ErrorCode.ERR_CANNOT_COMPLETE);
             ctx.writeAndFlush(r);
             if (success) {
                 if (size != oldSize) sendFreeSpace(ctx);
@@ -243,7 +224,7 @@ public class CloudFileHandler extends SimpleChannelInboundHandler<CloudMessage> 
         ctx.writeAndFlush(new SpaceResponse(freeSpace));
     }
 
-    private int startTransfer(String path, int oldSize, int newSize, long modified) {
+    private int startTransfer(String path, long oldSize, long newSize, long modified) {
         int id = 0;
         if (transfer.size() > 0)
             while (id < transfer.size() && transfer.get(id) != null) id++;

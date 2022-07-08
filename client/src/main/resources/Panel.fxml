@@ -30,7 +30,7 @@ maxHeight="-Infinity" maxWidth="-Infinity" minHeight="-Infinity" minWidth="-Infi
          <tooltip><Tooltip text="Refresh" /></tooltip>
         </Button>
     </HBox>
-    <TableView fx:id="filesTable" VBox.vgrow="ALWAYS" onKeyReleased="#keyboardHandler" onMouseClicked="#mouseHandler" />
+    <TableView fx:id="filesTable" editable="true" VBox.vgrow="ALWAYS" onKeyReleased="#keyboardHandler" onMouseClicked="#mouseHandler" />
     <properties>
         <ctrlRef><fx:reference source="controller"/></ctrlRef>
     </properties>

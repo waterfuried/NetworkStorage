@@ -14,7 +14,7 @@ public class ClientHandler implements Runnable {
     private long freeSpace;
     private Path userFolder;
     private final EventLogger logger;
-    private ArrayList<TransferOp> transfer = new ArrayList<>();
+    private final ArrayList<TransferOp> transfer = new ArrayList<>();
     private String uploadTarget;
 
     public Path getUserFolder() { return userFolder; }
@@ -77,7 +77,8 @@ public class ClientHandler implements Runnable {
     private void sendOpFailedResponse(String ... param) {
         sendResponse(Prefs.getCommand(Prefs.SRV_REFUSE, param));
     }
-    private int startTransfer(String path, int oldSize, int newSize, long modified) {
+
+    private int startTransfer(String path, long oldSize, long newSize, long modified) {
         int id = 0;
         if (transfer.size() > 0)
             while (id < transfer.size() && transfer.get(id) != null) id++;
@@ -198,62 +199,67 @@ public class ClientHandler implements Runnable {
                         uploadTarget = arg[2].equals(".") ? "" : Prefs.decodeSpaces(arg[2]);
                         Path dst = getUserFolder().resolve(uploadTarget).resolve(arg[1]);
                         // перед выполнением проверять наличие файла и достаточного свободного места
-                        //long oldSize = 0L; // добавление нового файла/папки
-                        boolean exists = Files.exists(dst);
-                        //TODO: если файл не существует или существует нулевого размера, проверка
-                        // это не различает и возвращает его размер как 0 в обоих случаях
-                        long oldSize = exists ? Files.isDirectory(dst) ? -1L : Files.size(dst) : 0L;
-                        int id = 0;
-                            if (size >= 0 && size >= oldSize && freeSpace-(size-oldSize) <= 0)
-                                sendOpFailedResponse(Prefs.ErrorCode.ERR_OUT_OF_SPACE.ordinal());
+                        int id = 0, errCode = -1;
+                        long oldSize = 0L;
+                        boolean updateModified = false, checkSpace = false;
+                        if (Files.exists(dst)) {
+                            oldSize = Files.isDirectory(dst) ? -1L : Files.size(dst);
+                            if (size > 0L)
+                                checkSpace = true;
                             else {
-                                boolean isFile = exists ? !Files.isDirectory(dst) : size >= 0,
-                                        success = (isFile && size >= 0) || (!isFile && size < 0);
-                                if (success)
-                                    if (size > 0) { // файл с данными
-                                        id = startTransfer(dst.toString(), (int)oldSize, (int)size, modified)+1;
-                                        if (exists) success = Prefs.resetFile(dst);
-                                    } else { // пустой файл или папка
-                                        if (size < 0) success = new File(dst.toString()).mkdir();
-                                        //TODO: как следствие из ошибки выше - если копируемый файл нулевого
-                                        // размера, он не будет создан, если файл в папке отсутствует
-                                        if (isFile && oldSize > 0) success = Prefs.resetFile(dst);
-                                        // установить дату и время последней модификации как у оригинала
-                                        if (success) {
-                                            if (modified > 0)
-                                                try {
-                                                    // если по какой-то причине дату/время применить не удалось,
-                                                    // считать это неудачей всей операции в целом не стоит
-                                                    new File(dst.toString()).setLastModified(modified);
-                                                } catch (NumberFormatException ex) { logger.logError(ex); }
-                                            freeSpace -= size-oldSize;
-                                        }
-                                    }
-                                if (success) {
-                                    sendResponse(Prefs.getCommand(Prefs.SRV_ACCEPT,
-                                            Prefs.COM_UPLOAD, (id > 0 ? id : Prefs.SRV_SUCCESS)+""));
-                                    if (id == 0 && (size < 0 || size != oldSize)) {
-                                        if (size != oldSize) sendFreeSpace();
-                                        sendFilesList(arg[2]);
-                                    }
-                                } else
-                                    sendOpFailedResponse(Prefs.ErrorCode.ERR_CANNOT_COMPLETE+"",
-                                            Prefs.COM_UPLOAD);
+                                updateModified = oldSize <= 0L;
+                                if (oldSize > 0L)
+                                    if (Prefs.resetFile(dst)) {
+                                        updateModified = true;
+                                        freeSpace += oldSize;
+                                    } else
+                                        errCode = Prefs.ErrorCode.ERR_CANNOT_COMPLETE.ordinal();
                             }
+                        } else
+                            if (size <= 0L)
+                                if (size < 0L ? new File(dst.toString()).mkdir() : Prefs.resetFile(dst))
+                                    updateModified = true;
+                                else
+                                    errCode = Prefs.ErrorCode.ERR_CANNOT_COMPLETE.ordinal();
+                            else
+                                checkSpace = true;
+                        if (errCode < 0) {
+                            if (checkSpace)
+                                if (freeSpace-(size-oldSize) <= 0L)
+                                    errCode = Prefs.ErrorCode.ERR_OUT_OF_SPACE.ordinal();
+                                else
+                                    id = 1+startTransfer(dst.toString(), oldSize, size, modified);
+                            // обновление даты и времени происходит только для папок и пустых файлов,
+                            // если по какой-то причине оно не произошло, операция в целом не выполнена
+                            if (updateModified && modified > 0
+                                    && !new File(dst.toString()).setLastModified(modified))
+                                errCode = Prefs.ErrorCode.ERR_CANNOT_COMPLETE.ordinal();
+                        }
+                        if (errCode < 0) {
+                            sendResponse(Prefs.getCommand(Prefs.SRV_ACCEPT,
+                                    Prefs.COM_UPLOAD, (id > 0 ? id : Prefs.SRV_SUCCESS) + ""));
+                            if (id == 0 && (size < 0 || size != oldSize || updateModified)) {
+                                if (size != oldSize) sendFreeSpace();
+                                sendFilesList(arg[2]);
+                            }
+                        } else
+                            sendOpFailedResponse(errCode+"", Prefs.COM_UPLOAD);
                     }
                     // /upld id block_size data_block
                     if (s.startsWith(Prefs.getCommand(Prefs.COM_UPLOAD_DATA))) {
                         String[] arg = cmd.split(" ", 4);
-                        int id = Integer.parseInt(arg[1])-1, size = Integer.parseInt(arg[2]);
+                        int id = Integer.parseInt(arg[1])-1;
+                        long size = Long.parseLong(arg[2]);
                         byte[] buf = Arrays.copyOf(Base64.getDecoder().decode(arg[3]),arg[3].length());
-                        //при использовании любых стандартных однобайтных кодировок происходит преобразование
-                        //символов - старше 127 кодируются в другие, UTF-8 - двухбайтная (?) кодировка
+                        // при использовании любых стандартных однобайтных кодировок
+                        // происходит преобразование символов - старше 127 кодируются в другие,
+                        // UTF-8 кодирует символы до 128 одним байтом, со 128 - двумя
                         //byte[] buf = Arrays.copyOf(arg[3].getBytes(StandardCharsets.US_ASCII),arg[3].length());
                         String dst = transfer.get(id).getPath();
                         boolean success = true;
                         try (BufferedOutputStream bos = new BufferedOutputStream(
                                  new FileOutputStream(dst, true), Prefs.BUF_SIZE)) {
-                            bos.write(buf, 0, size);
+                            bos.write(buf, 0, (int)size);
                         } catch (Exception ex) {
                             ex.printStackTrace();
                             success = false;
@@ -266,7 +272,7 @@ public class ClientHandler implements Runnable {
                                     try { new File(dst).setLastModified(transfer.get(id).getModified()); }
                                     catch (NumberFormatException ex) { logger.logError(ex); }
                                 size = transfer.get(id).getNewSize();
-                                int oldSize = transfer.get(id).getOldSize();
+                                long oldSize = transfer.get(id).getOldSize();
                                 freeSpace -= size-oldSize;
                                 transfer.remove(id);
                                 sendResponse(Prefs.getCommand(Prefs.SRV_ACCEPT,

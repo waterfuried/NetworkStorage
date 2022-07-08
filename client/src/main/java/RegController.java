@@ -46,7 +46,6 @@ public class RegController implements Initializable {
         if (!controller.authorized) {
             String login = loginField.getText().trim();
             String password = passwordField.getText().trim();
-            System.out.println("lkndlbdlk");
             Platform.runLater(() -> {
                 updateButtons();
                 if (btnAuth.isDisabled()) {

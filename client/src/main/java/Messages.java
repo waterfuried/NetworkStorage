@@ -44,4 +44,8 @@ public class Messages {
     static void displayErrorFX(int errCode, String title) {
         Platform.runLater(() -> displayError(Prefs.errMessage[errCode], title));
     }
+
+    static void displayErrorFX(Prefs.ErrorCode errCode, String title) {
+        Platform.runLater(() -> displayError(Prefs.errMessage[errCode.ordinal()], title));
+    }
 }
