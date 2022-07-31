@@ -9,12 +9,20 @@
             <MenuItem fx:id="menuItemLogIn" onAction="#showRegForm" text="Log In..." />
             <MenuItem fx:id="menuItemLogOut" disable="true" onAction="#logOut" text="Log out" />
             <SeparatorMenuItem />
-            <MenuItem fx:id="menuItemUpload" text="Upload selected item" disable="true" onAction="#tryUpload" />
-            <MenuItem fx:id="menuItemDownload" text="Download selected item" disable="true" onAction="#tryDownload" />
-            <SeparatorMenuItem />
-            <MenuItem fx:id="menuItemRemove" text="Remove selected item" disable="true" onAction="#tryRemove" />
+            <Menu fx:id="ActionMenu" disable="true" text="Make action">
+                <MenuItem fx:id="menuItemUpload" text="Upload" disable="true" onAction="#tryUpload" />
+                <MenuItem fx:id="menuItemDownload" text="Download" disable="true" onAction="#tryDownload" />
+                <SeparatorMenuItem />
+                <MenuItem fx:id="menuItemRename" text="Rename" disable="true" onAction="#tryRename" />
+                <SeparatorMenuItem />
+                <MenuItem fx:id="menuItemRemove" text="Remove" disable="true" onAction="#tryRemove" />
+            </Menu>
             <SeparatorMenuItem />
             <MenuItem onAction="#performExit" text="Exit" />
+        </Menu>
+        <Menu text="View">
+            <MenuItem fx:id="menuItemViewLeft" disable="true" text="Left list: client files" />
+            <MenuItem fx:id="menuItemViewRight" disable="true" text="Right list: client files" />
         </Menu>
     </MenuBar>
     <HBox VBox.vgrow="ALWAYS">

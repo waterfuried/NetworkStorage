@@ -1,7 +1,7 @@
 package cloud.response;
 
 import cloud.CloudMessage;
-import prefs.Prefs;
+import static prefs.Prefs.ErrorCode.*;
 
 import java.io.IOException;
 import java.nio.file.*;
@@ -14,9 +14,9 @@ public class RemovalResponse implements CloudMessage {
         try {
             Files.delete(path);
         } catch (IOException ex) {
-            errCode = Prefs.ErrorCode.ERR_NO_SUCH_FILE.ordinal();
+            errCode = ERR_NO_SUCH_FILE.ordinal();
             if (ex instanceof DirectoryNotEmptyException)
-                errCode = Prefs.ErrorCode.ERR_NOT_EMPTY.ordinal();
+                errCode = ERR_NOT_EMPTY.ordinal();
         }
     }
 

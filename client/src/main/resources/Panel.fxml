@@ -26,7 +26,7 @@ maxHeight="-Infinity" maxWidth="-Infinity" minHeight="-Infinity" minWidth="-Infi
         <Button fx:id="btnGoBack" disable="true" onAction="#btnGoBackAction" text="←">
          <tooltip><Tooltip text="Go back" /></tooltip>
         </Button>
-        <Button fx:id="btnRefresh" onAction="#btnRefreshAction" text="⟳">
+        <Button onAction="#btnRefreshAction" text="⟳">
          <tooltip><Tooltip text="Refresh" /></tooltip>
         </Button>
     </HBox>

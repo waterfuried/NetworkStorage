@@ -1,4 +1,4 @@
-import prefs.*;
+import static prefs.Prefs.*;
 
 import javafx.application.Platform;
 import javafx.fxml.FXML;
@@ -12,14 +12,14 @@ import java.net.URL;
 import java.util.ResourceBundle;
 
 public class RegController implements Initializable {
-    @FXML TextField loginField, emailField, usernameField;
-    @FXML PasswordField passwordField;
-    @FXML TextArea textArea;
-    @FXML Button btnAuth;
-    @FXML HBox buttonContainer;
-    @FXML GridPane gridPane;
-    Button btnReg, btnMoreLess;
-    @FXML Label emailLabel, usernameLabel;
+    @FXML private TextField loginField, emailField, usernameField;
+    @FXML private PasswordField passwordField;
+    @FXML private TextArea textArea;
+    @FXML private Button btnAuth;
+    @FXML private HBox buttonContainer;
+    @FXML private GridPane gridPane;
+    private Button btnReg, btnMoreLess;
+    @FXML private Label emailLabel, usernameLabel;
     /*Label emailLabel, usernameLabel;
     TextField emailField, usernameField;*/
 
@@ -33,7 +33,8 @@ public class RegController implements Initializable {
 
     boolean incompleteUserData() {
         return loginField.getText().trim().length() == 0 ||
-               passwordField.getText().trim().length() < Prefs.MIN_PWD_LEN;
+               passwordField.getText().trim().length() < MIN_PWD_LEN ||
+               passwordField.getText().trim().length() > MAX_PWD_LEN;
     }
 
     boolean incompleteRegData() {
@@ -43,7 +44,7 @@ public class RegController implements Initializable {
     }
 
     @FXML void authorize(/*ActionEvent actionEvent*/) {
-        if (!controller.authorized) {
+        if (!controller.isAuthorized()) {
             String login = loginField.getText().trim();
             String password = passwordField.getText().trim();
             Platform.runLater(() -> {
@@ -58,7 +59,7 @@ public class RegController implements Initializable {
     }
 
     @FXML public void register(/*ActionEvent actionEvent*/) {
-        if (!controller.authorized) {
+        if (!controller.isAuthorized()) {
             String login = loginField.getText().trim(),
                    password = passwordField.getText().trim(),
                    email = emailField.getText().trim(),
@@ -97,7 +98,7 @@ public class RegController implements Initializable {
     //        к нижнему полю ввода
     @FXML void showMoreOrLess(/*ActionEvent actionEvent*/) {
         canRegister = btnMoreLess.getText().equals("▼");
-        stage.setTitle(Prefs.SHORT_TITLE + " authorization" + (canRegister ? "/registration" : ""));
+        stage.setTitle(SHORT_TITLE + " authorization" + (canRegister ? "/registration" : ""));
 
         if (buttonContainer.getChildren().size() == 1)
             buttonContainer.getChildren().add(btnReg);
@@ -119,9 +120,11 @@ public class RegController implements Initializable {
         btnMoreLess.getTooltip().setText(canRegister ? "Show less" : "Show more");
     }
 
+    void addMessage(String msg) { textArea.appendText(msg); }
+
     void updateButtons() {
-        btnAuth.setDisable(controller.authorized || incompleteUserData());
-        btnReg.setDisable(controller.authorized || incompleteRegData());
+        btnAuth.setDisable(controller.isAuthorized() || incompleteUserData());
+        btnReg.setDisable(controller.isAuthorized() || incompleteRegData());
     }
 
     void createAdditionalControls() {
@@ -159,8 +162,8 @@ public class RegController implements Initializable {
             });
             createAdditionalControls();
             ChangeListener<String> changeListener = (observable, oldValue, newValue) -> {
-                btnAuth.setDisable(controller.authorized || incompleteUserData());
-                btnReg.setDisable(controller.authorized || incompleteRegData());
+                btnAuth.setDisable(controller.isAuthorized() || incompleteUserData());
+                btnReg.setDisable(controller.isAuthorized() || incompleteRegData());
             };
             loginField.textProperty().addListener(changeListener);
             passwordField.textProperty().addListener(changeListener);

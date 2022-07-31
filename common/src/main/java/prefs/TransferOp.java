@@ -2,19 +2,19 @@ package prefs;
 
 public class TransferOp {
     private final String path;
-    private final long modified, oldSize, newSize;
+    private final long modified, curSize, newSize;
     private long received;
 
-    public TransferOp(String path, long oldSize, long newSize, long modified) {
+    public TransferOp(String path, long curSize, long newSize, long modified) {
         this.path = path;
-        this.oldSize = oldSize;
+        this.curSize = curSize;
         this.newSize = newSize;
         this.modified = modified;
         this.received = 0;
     }
 
     public String getPath() { return path; }
-    public long getOldSize() { return oldSize; }
+    public long getCurSize() { return curSize; }
     public long getNewSize() { return newSize; }
     public long getModified() { return modified; }
     public long getReceived() { return received; }

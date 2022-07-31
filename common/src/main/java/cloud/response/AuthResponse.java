@@ -1,7 +1,7 @@
 package cloud.response;
 
 import cloud.CloudMessage;
-import prefs.Prefs;
+import static prefs.Prefs.ErrorCode.*;
 
 import java.io.File;
 import java.nio.file.Path;
@@ -29,11 +29,11 @@ public class AuthResponse implements CloudMessage {
                     b = false;
                     ex.printStackTrace();
                 }
-                if (!b) errCode = Prefs.ErrorCode.ERR_INTERNAL_ERROR.ordinal();
+                if (!b) errCode = ERR_INTERNAL_ERROR.ordinal();
             } else
-                errCode = Prefs.ErrorCode.ERR_INTERNAL_ERROR.ordinal();
+                errCode = ERR_INTERNAL_ERROR.ordinal();
         } else
-            errCode = Prefs.ErrorCode.ERR_WRONG_AUTH.ordinal();
+            errCode = ERR_WRONG_AUTH.ordinal();
     }
 
     public String getUsername() { return username; }

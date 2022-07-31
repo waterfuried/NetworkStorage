@@ -3,6 +3,7 @@ import prefs.*;
 import javafx.beans.property.*;
 import javafx.fxml.*;
 import javafx.scene.control.*;
+import javafx.scene.control.cell.*;
 import javafx.scene.input.*;
 
 import java.io.*;
@@ -14,25 +15,30 @@ import java.nio.file.*;
 import java.util.*;
 import java.util.stream.*;
 
+import static prefs.Prefs.*;
+import static prefs.Prefs.ErrorCode.*;
+
 public class PanelController implements Initializable {
-    @FXML Label nameLabel;
-    @FXML ComboBox<String> disks;
-    @FXML TextField curPath;
-    @FXML TableView<FileInfo> filesTable;
-    @FXML Button btnLevelUp, btnGoBack, btnRefresh;
+    @FXML private Label nameLabel;
+    @FXML private ComboBox<String> disks;
+    @FXML private TextField curPath;
+    @FXML private TableView<FileInfo> filesTable;
+    @FXML private Button btnLevelUp, btnGoBack;
 
     private Stack<String> prevPath;
     private int curDiskIdx;
-    private boolean serverMode = false;
+    private boolean serverMode = false, editing = false;
     private List<FileInfo> serverFolder;
+
+    private int savedIdx;
 
     private NeStController parentController;
 
-    public void setController (NeStController controller) {
+    void setController (NeStController controller) {
         parentController = controller;
     }
 
-    public void setServerFolder(List<FileInfo> serverFolder) { this.serverFolder = serverFolder; }
+    void setServerFolder(List<FileInfo> serverFolder) { this.serverFolder = serverFolder; }
 
     void updateFreeSpace(long freeSpace) {
         nameLabel.setText("Server files ("+(freeSpace/1000/1000)+"M free)");
@@ -61,6 +67,10 @@ public class PanelController implements Initializable {
 
     boolean isServerMode() { return serverMode; }
 
+    void updateFilesList() {
+        updateFilesList(Paths.get(getCurPath()));
+    }
+
     void updateFilesList(Path path) {
         try {
             refreshCurPath(path.normalize().toAbsolutePath().toString());
@@ -70,7 +80,8 @@ public class PanelController implements Initializable {
             }
             filesTable.sort();
         } catch (IOException ex) {
-            Messages.displayError("Failed to update list of files.", "");
+            Messages.displayError(ERR_FOLDER_ACCESS_DENIED, "");
+            ex.printStackTrace();
         }
     }
 
@@ -81,21 +92,21 @@ public class PanelController implements Initializable {
         if (filesTable.getItems() != null) filesTable.getItems().clear();
         if (serverFolder != null)
             try {
-                filesTable.getItems().addAll(serverFolder); // иногда стоит использовать setAll
+                filesTable.getItems().setAll(serverFolder);
                 filesTable.sort();
             } catch (Exception ex) {
-                Messages.displayErrorFX("Failed to update list of files.", "");
+                Messages.displayError(ERR_FOLDER_ACCESS_DENIED, "");
+                ex.printStackTrace();
             }
     }
 
     @FXML void cmbxChangeDisk(/*ActionEvent ev*/) {
-        if (disks.getSelectionModel().getSelectedIndex() != curDiskIdx) {
-            pushCurrentPath();
-            updateFilesList(Paths.get(disks.getSelectionModel().getSelectedItem()));
-            curDiskIdx = disks.getSelectionModel().getSelectedIndex();
-            btnLevelUp.setDisable(true);
-            btnGoBack.setDisable(prevPath.isEmpty());
-        }
+        if (disks.getSelectionModel().getSelectedIndex() == curDiskIdx) return;
+        pushCurrentPath();
+        updateFilesList(Paths.get(disks.getSelectionModel().getSelectedItem()));
+        curDiskIdx = disks.getSelectionModel().getSelectedIndex();
+        btnLevelUp.setDisable(true);
+        btnGoBack.setDisable(prevPath.isEmpty());
     }
 
     void pushCurrentPath() {
@@ -147,9 +158,15 @@ public class PanelController implements Initializable {
     }
 
     String getSelectedFilename() {
-        return filesTable.isFocused() && filesTable.getSelectionModel().getSelectedItem() != null
+        return filesTable.getSelectionModel().getSelectedItem() != null
                 ? filesTable.getSelectionModel().getSelectedItem().getFilename()
                 : "";
+    }
+
+    Long getSelectedFileSize() {
+        return filesTable.getSelectionModel().getSelectedItem() != null
+                ? filesTable.getSelectionModel().getSelectedItem().getSize()
+                : null;
     }
 
     String getCurPath() { return curPath.getText(); }
@@ -160,6 +177,26 @@ public class PanelController implements Initializable {
 
     String getFullSelectedFilename() {
         return getCurPath()+(getCurPath().length() == 0 ? "" : File.separatorChar)+getSelectedFilename();
+    }
+
+    TableView<FileInfo> getFilesTable() { return filesTable; }
+
+    int getSavedIdx() { return savedIdx; }
+
+    void setSavedIdx(int savedIdx) { this.savedIdx = savedIdx; }
+
+    void setEditing(boolean editing) { this.editing = editing; }
+
+    int getIndexOf(String entryName) {
+        for (int i = 0; i < filesTable.getItems().size(); i++)
+            if (filesTable.getItems().get(i).getFilename().equals(entryName)) return i;
+        return -1;
+    }
+
+    int getIndexOfAnyMatch(String entryName) {
+        for (int i = 0; i < filesTable.getItems().size(); i++)
+            if (filesTable.getItems().get(i).getFilename().equalsIgnoreCase(entryName)) return i;
+        return -1;
     }
 
     void refreshCurPath(String path) {
@@ -183,38 +220,29 @@ public class PanelController implements Initializable {
         return i < filesTable.getColumns().size() ? i : -1;
     }
 
+    // методы обработки выбранного элемента списка
     /**
-     * методы обработки выбранного элемента списка
-     *
-     * 1. активация - нажатие Enter или двойной щелчок
+     * активация - нажатие Enter или двойной щелчок<br><br>
+     * всвязи с активацией переименования выбранного элемента
+     * как по нажатию Enter, так и двойному щелчку (или двум щелчкам),
+     * могут происходить коллизии обработки
      */
     void processItem() {
-        if (filesTable.getSelectionModel().getSelectedItem() != null) {
-            Path p = Paths.get(getCurPath(), filesTable.getSelectionModel().getSelectedItem().getFilename());
-            boolean isFolder = false;
-            if (serverMode) {
-                int i = getSizeColumn();
-                if (i >= 0) {
-                    TableColumn<FileInfo, Long> fileSizeColumn =
-                            (TableColumn<FileInfo, Long>)filesTable.getColumns().get(i);
-                    isFolder = fileSizeColumn.getCellData(
-                            filesTable.getSelectionModel().getSelectedIndex()).intValue() < 0;
-                    if (isFolder)
-                        parentController.requestFiles(p.toString());
-                }
-            } else {
-                isFolder = Files.isDirectory(p);
-                if (isFolder) updateFilesList(p);
-            }
-            if (isFolder) {
-                pushCurrentPath();
-                btnLevelUp.setDisable(false);
-            }
+        if (getSelectedFilename().length() == 0) return;
+        Path p = Paths.get(getCurPath(), getSelectedFilename());
+        if ((long)filesTable.getColumns().get(getSizeColumn())
+                  .getCellData(filesTable.getSelectionModel().getSelectedIndex()) < 0L) {
+            if (serverMode)
+                parentController.requestFiles(p.toString());
+            else
+                updateFilesList(p);
+            pushCurrentPath();
+            btnLevelUp.setDisable(false);
         }
     }
 
     /**
-     * 2. удаление (по нажатию Delete):
+     * удаление (по нажатию Delete):<br><br>
      *    данный метод удаляет файл (папку) только на клиенте
      *    и вызывается не напрямую, а из метода родительского
      *    контроллера tryRemove - пояснение см. в его описании
@@ -222,28 +250,134 @@ public class PanelController implements Initializable {
     void removeItem() {
         try {
             Files.delete(Paths.get(getCurPath(), getSelectedFilename()));
-            Messages.displayInfo(getSelectedFilename() + " removed successfully", "Removal completed");
             updateFilesList(Paths.get(getCurPath()));
+            filesTable.getSelectionModel().select(savedIdx);
         } catch (IOException ex) {
-            Prefs.ErrorCode errCode = Prefs.ErrorCode.ERR_NO_SUCH_FILE;
-            if (ex instanceof DirectoryNotEmptyException) errCode = Prefs.ErrorCode.ERR_NOT_EMPTY;
-            Messages.displayError(Prefs.errMessage[errCode.ordinal()], Prefs.ERR_CANNOT_REMOVE);
+            ErrorCode errCode = ERR_NO_SUCH_FILE;
+            if (ex instanceof DirectoryNotEmptyException) errCode = ERR_NOT_EMPTY;
+            Messages.displayError(errCode, ERR_OPERATION_FAILED, COM_REMOVE);
         }
     }
 
-    @FXML void keyboardHandler(KeyEvent ev) {
-        if (filesTable.getSelectionModel().getSelectedIndex() >= 0) {
-            switch (ev.getCode()) {
-                case DELETE: parentController.tryRemove(); break;
-                case ENTER: processItem();
+    /**
+     * переименование - и только: перемещения не допускаются (TODO),
+     * по меньшей мере до реализации возможности переключать
+     * любую(!) панель между клиентским компьютером и папкой
+     * пользователя на сервере - именно такой подход позволит
+     * избежать избыточного анализа вводимых строк с новым именем.
+     * <br><br>
+     * переименовывает файл (папку) только на клиенте,
+     * переименованием на сервере занимается
+     * метод родительского контроллера
+     * @param curName     текущее имя элемента
+     * @param newName     новое имя элемента
+     * @return  0 = переименование завершено (с любым исходом),<br>
+     *          1 = переименование можно выполнять с заменой совпадений,<br>
+     *         -1 = переименование можно выполнять, но наличие совпадений
+     *              не может быть установлено
+     */
+    int renameItem(String curName, String newName, boolean restore) {
+        if (newName.equals(curName)) return 0;
+        boolean wrongName = newName.length() == 0 || hasInvalidCharacters(newName),
+                stayHere = newName.equals("."), levelUp = newName.equals("..");
+
+        if (filesTable.getItems().size() == 1 && !wrongName && !levelUp && !stayHere) {
+            if (!serverMode) rename(Paths.get(getCurPath(), curName), newName, false);
+            return 1;
+        }
+
+        if (restore) {
+            int row = filesTable.getSelectionModel().getSelectedIndex();
+            FileInfo cfi = filesTable.getItems().get(row);
+            cfi.setFilename(curName);
+            filesTable.getItems().set(row, cfi);
+            filesTable.refresh();
+        }
+
+        if (stayHere) return 0;
+        if (wrongName || levelUp) {
+            // чтобы дождаться факта закрытия диалога (и только после него что-либо сделать),
+            // нужно вызывать его непосредственно - не в отдельном потоке обработки графики
+            if (newName.length() > 0)
+                Messages.displayError(wrongName ? ERR_INVALID_NAME : ERR_REPLACEMENT_NOT_ALLOWED, "");
+            return 0;
+        }
+
+        // если элемент с новым именем отсутствует в списке,
+        // в случае extFS он действительно отсутствует,
+        // в случае же NTFS/FAT он либо отсутствует,
+        // либо присутствует в единственном экземпляре -
+        // какие-либо символы в его имени имеют другой регистр
+        // и без попытки изменения его имени средствами ФС
+        // невозможно однозначно ответить на вопрос о его существовании
+        int newType = checkPresence(newName);
+        if (newType < 0) {
+            int n = serverMode ? -1 : rename(Paths.get(getFullSelectedFilename()), newName, false);
+            if (n < 0) return -1;
+            switch (ErrorCode.values()[n]) {
+                case ERR_NO_SUCH_FILE:
+                    n = getIndexOfAnyMatch(newName);
+                    if (n < filesTable.getItems().size())
+                        newType = filesTable.getItems().get(n).getSize() < 0L ? 1 : 0;
+                    break;
+                case ERR_FOLDER_ACCESS_DENIED:
+                    Messages.displayError(ERR_FOLDER_ACCESS_DENIED, ERR_OPERATION_FAILED);
+                    return 0;
             }
+        }
+        if (isRenameable(newName, newType)) {
+            if (!serverMode) rename(Paths.get(getFullSelectedFilename()), newName, true);
+            return 1;
+        }
+        return 0;
+    }
+
+    /**
+     * проверка существования элемента в списке;
+     * гарантирует только то, что существует (отстутсвует) элемент
+     * точно с таким же именем - с учетом регистра символов в нем
+     * @param name     имя элемента
+     * @return -1, если элемент отсутствует,<br>
+     *          0, если элемент является файлом,<br>
+     *          1, если элемент является папкой
+     */
+    int checkPresence(String name) {
+        for (FileInfo fi : filesTable.getItems())
+            if (fi.getFilename().equals(name))
+                return fi.getSize() >= 0 ? 0 : 1;
+        return -1;
+    }
+
+    boolean isRenameable(String newName, int newType) {
+        boolean wrongReplace = false, canRename = false;
+        if (newType == 0) { // элемент с новым именем - файл
+            wrongReplace = filesTable.getItems()
+                    .get(filesTable.getSelectionModel().getSelectedIndex()).getSize() < 0;
+            if (!wrongReplace && Messages.confirmReplacement(true, newName))
+                canRename = true;
+        }
+        if (newType == 1) // ...папка
+            Messages.displayError(ERR_REPLACEMENT_NOT_ALLOWED, "");
+        if (wrongReplace)
+            Messages.displayError(ERR_WRONG_REPLACEMENT, "");
+        return canRename;
+    }
+
+    @FXML void keyboardHandler(KeyEvent ev) {
+        // I think it is a kind of bug:
+        // any key Event including key presses (like del or enter)
+        // while editing text at text editor of main controller's
+        // TextInputDialog will be caught here
+        if (filesTable.getSelectionModel().getSelectedIndex() < 0) return;
+        switch (ev.getCode()) {
+            case DELETE: if (!editing) parentController.tryRemove(); break;
+            case ENTER: if (editing) editing = false; else processItem();
         }
     }
 
     @FXML void mouseHandler(MouseEvent ev) {
         if (ev.getClickCount() == 2) processItem();
     }
-
     /*
         Урок 3. Фреймворк Netty
         1. Взять код с урока и добавить логику навигации по папкам на клиенте и на сервере.
@@ -267,6 +401,21 @@ public class PanelController implements Initializable {
         TableColumn<FileInfo, String> fileDateColumn = new TableColumn<>("Date");
 
         fileNameColumn.setCellValueFactory(p -> new SimpleStringProperty(p.getValue().getFilename()));
+        fileNameColumn.setCellFactory(TextFieldTableCell.forTableColumn());
+        fileNameColumn.setOnEditStart(ev -> editing = true);
+        fileNameColumn.setOnEditCancel(ev -> editing = false);
+        fileNameColumn.setOnEditCommit(ev -> {
+            editing = true;
+            int replace = renameItem(ev.getOldValue(), ev.getNewValue(), true);
+            if (replace != 0)
+                if (serverMode)
+                    parentController.renameEntry(ev.getNewValue(), replace == 1);
+                else {
+                    updateFilesList(Paths.get(getCurPath()));
+                    filesTable.getSelectionModel().select(getIndexOf(ev.getNewValue()));
+                    parentController.onPanelUpdated();
+                }
+        });
         fileSizeColumn.setCellValueFactory(p -> new SimpleObjectProperty<>(p.getValue().getSize()));
         fileSizeColumn.setCellFactory(c -> new TableCell<FileInfo, Long>() {
             @Override protected void updateItem(Long item, boolean empty) {
@@ -276,8 +425,8 @@ public class PanelController implements Initializable {
                         : item < 0 ? "[folder]" : String.format("%,d", item));
             }
         });
-        fileDateColumn.setCellValueFactory(p -> new SimpleStringProperty(p.getValue()
-                .getModified().format(Prefs.dtFmt)));
+        fileDateColumn.setCellValueFactory(
+                p -> new SimpleStringProperty(p.getValue().getModified().format(dtFmt)));
 
         fileNameColumn.setPrefWidth(300);
         fileSizeColumn.setPrefWidth(100);

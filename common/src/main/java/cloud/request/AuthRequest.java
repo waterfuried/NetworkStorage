@@ -6,13 +6,14 @@ import cloud.CloudMessage;
  * запрос авторизации
  */
 public class AuthRequest implements CloudMessage {
-    private final String login, password;
+    private final String login;
+    private final int pwdHash;
 
-    public AuthRequest(String login, String password) {
+    public AuthRequest(String login, int pwdHash) {
         this.login = login;
-        this.password = password;
+        this.pwdHash = pwdHash;
     }
 
     public String getLogin() { return login; }
-    public String getPassword() { return password; }
+    public int getPasswordHash() { return pwdHash; }
 }
