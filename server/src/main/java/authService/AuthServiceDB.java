@@ -1,10 +1,8 @@
 package authService;
 
-import org.sqlite.SQLiteErrorCode;
-import org.sqlite.SQLiteException;
 import prefs.*;
 import java.sql.*;
-import java.util.logging.Level;
+import static prefs.Prefs.*;
 
 public class AuthServiceDB implements AuthService {
     public static final String JDBC = "jdbc";
@@ -62,23 +60,23 @@ public class AuthServiceDB implements AuthService {
     /**
      * проверить наличие пользователя в таблице БД по логину и паролю
      * @param login    - логин
-     * @param password - пароль
+     * @param pwdHash - хеш пароля
      * @param userdata - персональные данные пользователя (не обязательно)
      * @return
      *      имя пользователя, если он найден в БД
      *      пустая строка, если он не найден в БД
      *      null, если произошла ошибка обращения к БД
      */
-    @Override public String getUsername(String login, String password, String ... userdata) {
+    @Override public String getUsername(String login, int pwdHash, String ... userdata) {
         try (PreparedStatement ps = connection.prepareStatement(
-                adjustQuery("SELECT * FROM %s WHERE login = ? AND pwd = ? LIMIT 1;"))) {
+                adjustQuery("SELECT * FROM %s WHERE login = ? LIMIT 1;"))) {
             ps.setString(1, login);
-            ps.setString(2, password);
             if (userdata != null && userdata.length > 0)
                 for (int i = 0; i < userdata.length && userdata[i].length() > 0; i++)
                     ps.setString(i+3, userdata[i]);
             ResultSet rs = ps.executeQuery();
-            return rs.next() ? rs.getString("username") : "";
+            if (!rs.next() || getHash(rs.getString("pwd")) != pwdHash) return null;
+            return rs.getString("username");
         } catch (SQLException ex) { logger.logError(ex); }
         return null;
     }
@@ -86,23 +84,23 @@ public class AuthServiceDB implements AuthService {
     /**
      * получить имя и номер пользователя по его логину и паролю
      * @param login    - логин
-     * @param password - пароль
+     * @param pwdHash - хеш пароля
      * @param userdata - персональные данные пользователя (не обязательно)
      * @return
      *      имя пользователя и номер его папки, разделенные знаком табуляции, если пользователь в БД найден
      *      пустая строка, если произошла ошибка обращения к БД
      *      null, если пользователь в БД не найден
      */
-    @Override public String getUserInfo(String login, String password, String ... userdata) {
+    @Override public String getUserInfo(String login, int pwdHash, String ... userdata) {
         try (PreparedStatement ps = connection.prepareStatement(
-                adjustQuery("SELECT * FROM %s WHERE login = ? AND pwd = ? LIMIT 1;"))) {
+                adjustQuery("SELECT * FROM %s WHERE login = ? LIMIT 1;"))) {
             ps.setString(1, login);
-            ps.setString(2, password);
             if (userdata != null && userdata.length > 0)
                 for (int i = 0; i < userdata.length && userdata[i].length() > 0; i++)
                     ps.setString(i+3, userdata[i]);
             ResultSet rs = ps.executeQuery();
-            return rs.next() ? rs.getString("username")+"\t"+rs.getInt("usernum") : null;
+            if (!rs.next() || getHash(rs.getString("pwd")) != pwdHash) return null;
+            return rs.getString("username")+"\t"+rs.getInt("usernum");
         } catch (SQLException ex) { logger.logError(ex); }
         return "";
     }

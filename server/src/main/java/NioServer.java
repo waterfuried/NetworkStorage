@@ -7,7 +7,7 @@
   cd path - перейти в папку с именем
   Внимательно с исключениями, клиент должен понимать что не так если произошла ошибка
 */
-import prefs.Prefs;
+import static prefs.Prefs.*;
 
 import java.io.IOException;
 
@@ -33,12 +33,12 @@ public class NioServer {
         // открытие селектора канала
         selector = Selector.open();
         // связывание канала сокета с адресом сокета
-        server.bind(new InetSocketAddress(Prefs.PORT));
+        server.bind(new InetSocketAddress(PORT));
         // настроить режим блокировки канала ?
         server.configureBlocking(false);
         // регистрация канала с выбранным селектором на принятие соединений
         server.register(selector, SelectionKey.OP_ACCEPT);
-        curPath = Prefs.serverURL;
+        curPath = serverURL;
     }
 
     public void start() {
@@ -67,7 +67,7 @@ public class NioServer {
     private void handleRead(SelectionKey key) {
         // буфер удаляется GC автоматически - нет необходимости
         // (как и возможности) его ручного освобождения
-        ByteBuffer buf = ByteBuffer.allocate(Prefs.BUF_SIZE);
+        ByteBuffer buf = ByteBuffer.allocate(BUF_SIZE);
         // ссылка на канал (серверного) сокета
         SocketChannel channel = (SocketChannel)key.channel();
 
@@ -100,20 +100,20 @@ public class NioServer {
         final String changedTo = "current folder has been changed to ";
         String response = "";
         switch (cmd[0]) {
-            case Prefs.COM_TERM_CD:
+            case COM_TERM_CD:
                 if (cmd.length == 2)
                     // переход в корневую папку пользователя обработать отдельно
                     // альтернативы: File.separator и FileSystems.getDefault().getSeparator()
                     if (cmd[1].equals(System.getProperty("file.separator"))) {
-                        if (Prefs.isRootPath(curPath))
+                        if (isRootPath(curPath, true))
                             response = "already at root folder";
                         else {
-                            curPath = Prefs.getRootPath();
+                            curPath = getRootPath();
                             response = changedTo + "root";
                         }
                     } else {
                         Path dst = curPath.resolve(cmd[1]).normalize();
-                        if (Prefs.isValidPath(dst)) {
+                        if (isValidPath(dst)) {
                             if (Files.exists(dst))
                                 if (Files.isDirectory(dst)) {
                                     curPath = dst.normalize();
@@ -126,9 +126,9 @@ public class NioServer {
                             response = "wrong path: " + cmd[1];
                     }
                 else
-                    response = Prefs.getCmdHelp(1);
+                    response = getCmdHelp(1);
                 break;
-            case Prefs.COM_TERM_LIST:
+            case COM_TERM_LIST:
                 // получить поток элементов в текущей (вообще - в указанной) папке
                 try (Stream<Path> pathStream = Files.list(curPath)) {
                     response = pathStream.map(p -> {
@@ -140,7 +140,7 @@ public class NioServer {
                     System.err.println(ex.getMessage());
                 }
                 break;
-            case Prefs.COM_TERM_CAT:
+            case COM_TERM_CAT:
                 if (cmd.length == 2) {
                     Path p = curPath.resolve(cmd[1]);
                     if (p.toFile().isFile() && Files.isReadable(p)) {
@@ -152,13 +152,13 @@ public class NioServer {
                     } else
                         response = "unable to display "+cmd[1];
                 } else
-                    response = Prefs.getCmdHelp(0);
+                    response = getCmdHelp(0);
                 break;
-            case Prefs.COM_TERM_HELP:
-                response = Prefs.getHelp();
+            case COM_TERM_HELP:
+                response = getHelp();
                 break;
-            case Prefs.COM_QUIT:
-            case Prefs.COM_EXIT:
+            case COM_QUIT:
+            case COM_EXIT:
                 try { channel.close(); }
                 catch (IOException ex) { System.err.println(ex.getMessage()); }
                 return;
@@ -175,13 +175,13 @@ public class NioServer {
             channel.configureBlocking(false);
             // зарегистрировать селектор канала на операции чтения
             channel.register(selector, SelectionKey.OP_READ);
-            echo(channel, "Server terminal is ready.\n\r"+Prefs.getHelp());
+            echo(channel, "Server terminal is ready.\n\r"+getHelp());
         } catch (IOException ex) { System.err.println(ex.getMessage()); }
     }
 
     private void echo(SocketChannel channel, String msg) {
         try {
-            channel.write(ByteBuffer.wrap((msg + "\n\r" + Prefs.terminalPrompt)
+            channel.write(ByteBuffer.wrap((msg + "\n\r" + terminalPrompt)
                     .getBytes(StandardCharsets.UTF_8)));
         } catch (IOException ex) { System.err.println(ex.getMessage()); }
     }

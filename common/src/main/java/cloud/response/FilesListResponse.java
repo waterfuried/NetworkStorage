@@ -16,43 +16,31 @@ import java.util.stream.Stream;
  * ответ на запрос списка файлов и папок в папке пользователя на сервере
  * возвращает код ошибки, если указанный путь в папке не существует
  * TODO: по непонятной причине этот ответ не обрабатывается (его нет среди полученных ответов)
- *       в клиентском цикле чтения ответов сервера, если список файлов отправлять не строкой,
- *       а именно списком из элементов FileInfo
+ *       в клиентском цикле чтения ответов сервера
  */
 public class FilesListResponse implements CloudMessage {
-    private String/*List<FileInfo>*/ entries;
-    private final String folder;
+    private List<FileInfo> entries;
+    private final Path folder;
     private int entriesCount, errCode;
 
-    public FilesListResponse(String folder, Path userFolder) {
+    public FilesListResponse(Path folder) {
         this.folder = folder;
-        Path path = userFolder;
         errCode = -1;
-        try { path = path.resolve(folder); }
-        catch (InvalidPathException ex) {
+        try (Stream<Path> pathStream = Files.list(folder)) {
+            entries = pathStream
+                    .map(FileInfo::new)
+                    .collect(Collectors.toList());
+            entriesCount = entries.size();
+            if (entriesCount == 1 && entries.get(0).getFilename().length() == 0) entriesCount = 0;
+        } catch (IOException ex) {
             errCode = Prefs.ErrorCode.ERR_NO_SUCH_FILE.ordinal();
+            ex.printStackTrace();
         }
-        if (errCode < 0) {
-            try (Stream<Path> pathStream = Files.list(path)) {
-                entries = pathStream
-                        .map(FileInfo::new)
-                        //при составлении списка из FileInfo эта строка, естественно, убирается
-                        .map(fi -> fi.getFilename() + ":" + fi.getSize() + ":" + fi.getModifiedAsLong())
-                        .collect(Collectors.joining("\n"));
-                        //.collect(Collectors.toList());
-                entriesCount = entries.split("\n").length;
-                //entriesCount = entries.size();
-                if (entriesCount == 1 && entries./*get(0).getFilename().*/length() == 0) entriesCount = 0;
-            } catch (IOException ex) {
-                errCode = Prefs.ErrorCode.ERR_NO_SUCH_FILE.ordinal();
-                ex.printStackTrace();
-            }
-        }
-        System.out.println("folder='"+path+"' err="+errCode+" count="+entriesCount+" list="+entries);
+        System.out.println("folder='"+folder+"' err="+errCode+" count="+entriesCount+" list="+entries);
     }
 
-    public /*List<FileInfo>*/String getEntries() { return entries; }
+    public List<FileInfo> getEntries() { return entries; }
     public int getErrCode() { return errCode; }
     public int getEntriesCount() { return entriesCount; }
-    public String getFolder() { return folder; }
+    public Path getFolder() { return folder; }
 }

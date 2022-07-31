@@ -5,13 +5,13 @@ public interface AuthService {
      * получить имя (или ник) пользователя по логину и паролю
      * @return null если учетная запись не найдена, имя (или ник) - в противном случае
      **/
-    String getUsername (String login, String password, String ... userdata);
+    String getUsername (String login, int pwdHash, String ... userdata);
 
     /**
      * получить имя (или ник) и другие данные пользователя по логину и паролю
      * @return null если учетная запись не найдена, данные пользователя - в противном случае
      **/
-    String getUserInfo (String login, String password, String ... userdata);
+    String getUserInfo (String login, int pwdHash, String ... userdata);
 
     /**
      * выполнить регистрацию учетной записи

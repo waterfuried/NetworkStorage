@@ -10,7 +10,10 @@ import io.netty.channel.*;
 
 import java.io.*;
 import java.nio.file.*;
+import java.util.*;
 
+import static prefs.Prefs.*;
+import static prefs.Prefs.ErrorCode.*;
 /*
     если обработчик запросов клиента находится на серверной стороне (где он и должен быть),
     операции в пользовательской папке можно писать не в коде ответа на запрос, а прямо здесь,
@@ -29,9 +32,10 @@ import java.nio.file.*;
 public class CloudFileHandler extends SimpleChannelInboundHandler<CloudMessage> {
     private long freeSpace;
     private Path userFolder;
+    private String uploadTarget, userLogin;
     AuthService DBService;
 
-    public void setUserFolder(String folder) { this.userFolder = Prefs.serverURL.resolve(folder); }
+    private final ArrayList<TransferOp> transfer = new ArrayList<>();
 
     public CloudFileHandler(AuthService dbs) {
         DBService = dbs;
@@ -46,116 +50,204 @@ public class CloudFileHandler extends SimpleChannelInboundHandler<CloudMessage> 
         if (cloudMessage != null) System.out.println("request="+cloudMessage);
         // запрос авторизации
         if (cloudMessage instanceof AuthRequest) {
-            AuthRequest auth = (AuthRequest)cloudMessage;
-            System.out.println("authorization request: "+auth.getLogin()+" "+auth.getPassword());
-            String newUser = auth.getPassword().length() < Prefs.MIN_PWD_LEN
-                    ? null
-                    : DBService.getUserInfo(auth.getLogin(), auth.getPassword());
+            AuthRequest rq = (AuthRequest)cloudMessage;
+            userLogin = rq.getLogin();
+            System.out.println("authorization request: "+userLogin+" "+rq.getPasswordHash());
+            String newUser = DBService.getUserInfo(userLogin, rq.getPasswordHash());
             if (newUser != null) {
                 String[] userdata = newUser.split("\t");
                 if (userdata.length > 1) {
                     newUser = userdata[0];
-                    setUserFolder("user" + userdata[1]);
+                    userFolder = serverURL.resolve("user" + userdata[1]);
                     freeSpace = new SpaceResponse(userFolder).getSpace();
                 } else
                     newUser = null;
             }
-            AuthResponse r = new AuthResponse(newUser, userFolder);
-            ctx.writeAndFlush(r);
-            if (newUser != null && r.getErrCode() < 0) {
-                ctx.writeAndFlush(new SpaceResponse(freeSpace));
-                ctx.writeAndFlush(new FilesListResponse("", userFolder));
-            }
+            AuthResponse rs = new AuthResponse(newUser, userFolder);
+            if (newUser != null && rs.getErrCode() < 0) {
+                ctx.write(rs);
+                ctx.write(new SpaceResponse(freeSpace));
+                ctx.writeAndFlush(new FilesListResponse(userFolder));
+            } else
+                ctx.writeAndFlush(rs);
         }
         if (cloudMessage instanceof RegRequest) {
-            RegRequest reg = (RegRequest)cloudMessage;
-            System.out.println("registration request: login="+reg.getLogin()
-                    +" pwd="+reg.getPassword()
-                    +" email="+reg.getEmail()
-                    +" username="+reg.getUsername());
+            RegRequest rq = (RegRequest)cloudMessage;
+            System.out.println("registration request: login="+rq.getLogin()
+                    +" pwd="+rq.getPassword()
+                    +" email="+rq.getEmail()
+                    +" username="+rq.getUsername());
             int number = 0;
-            String newUser = reg.getPassword().length() < Prefs.MIN_PWD_LEN
+            String newUser = rq.getPassword().length() < MIN_PWD_LEN
+                    || rq.getPassword().length() > MAX_PWD_LEN
                     ? null
-                    : (number = DBService.registerUser(reg.getLogin(),
-                        reg.getPassword(), reg.getUsername(), reg.getEmail())) > 0
-                        ? reg.getUsername() : null;
+                    : (number = DBService.registerUser(
+                            rq.getLogin(), encode(rq.getPassword(), false),
+                            rq.getUsername(), rq.getEmail())) > 0
+                       ? rq.getUsername() : null;
             if (newUser != null) {
-                setUserFolder("user" + number);
-                freeSpace = Prefs.MAXSIZE;
+                userFolder = serverURL.resolve("user" + number);
+                freeSpace = MAXSIZE;
             }
-            RegResponse r = new RegResponse(newUser, number, userFolder);
-            ctx.writeAndFlush(r);
-            if (newUser != null && r.getErrCode() < 0) {
-                ctx.writeAndFlush(new SpaceResponse(freeSpace));
-                ctx.writeAndFlush(new FilesListResponse("", userFolder));
-            }
+            RegResponse rs = new RegResponse(newUser, number, userFolder);
+            if (newUser != null && rs.getErrCode() < 0) {
+                ctx.write(rs);
+                ctx.write(new SpaceResponse(freeSpace));
+                ctx.writeAndFlush(new FilesListResponse(userFolder));
+            } else
+                ctx.writeAndFlush(rs);
         }
         // запрос завершения сеанса пользователя
         if (cloudMessage instanceof LogoutRequest) {
             System.out.println("logout request");
-            LogoutRequest logout = (LogoutRequest)cloudMessage;
-            ctx.writeAndFlush(new LogoutResponse(logout.getLogin()));
+            ctx.writeAndFlush(new LogoutResponse(userLogin));
         }
         // запрос свободного места в пользовательской папке
         if (cloudMessage instanceof SpaceRequest) {
             System.out.println("free space request");
-            // вместо выполнения запроса можно передать хранящееся во freeSpace значение
-            // при нормальных условиях, все операции передачи файлов на сервер здесь
-            // контролируются, и хранящаяся информация о свободном месте актуальна
-            ctx.writeAndFlush(new SpaceResponse(freeSpace));
+            // вместо выполнения запроса передать хранящееся во freeSpace значение -
+            // оно всегда актуально, поскольку обрабываются ВСЕ операции передачи
+            // и удаления файлов на сервере
+            sendFreeSpace(ctx);
         }
         // запрос списка файлов/папок в пользовательской папке
         if (cloudMessage instanceof FilesListRequest) {
-            FilesListRequest files = (FilesListRequest)cloudMessage;
-            System.out.println("files list request: '"+files.getPath()+"'");
-            ctx.writeAndFlush(new FilesListResponse(files.getPath(), userFolder));
+            FilesListRequest rq = (FilesListRequest)cloudMessage;
+            System.out.println("files list request: '"+rq.getPath()+"'");
+            ctx.writeAndFlush(new FilesListResponse(userFolder.resolve(rq.getPath())));
         }
         // запрос копирования файла/папки с клиента на сервер
         if (cloudMessage instanceof UploadRequest) {
-            UploadRequest upload = (UploadRequest)cloudMessage;
+            UploadRequest rq = (UploadRequest)cloudMessage;
             System.out.println("upload request:"+
-                    "\n"+upload.getSrcPath()+
-                    "\n"+upload.getDstPath()+
-                    "\n"+upload.getSize()+
-                    "\n"+upload.getModified()+
-                    "\n"+upload.mustOverwrite());
-            UploadResponse r =
-                    new UploadResponse(upload.getSrcPath(), upload.getDstPath(),
-                            upload.getSize(), upload.getModified(), upload.mustOverwrite(),
-                            freeSpace, userFolder);
-            ctx.writeAndFlush(r);
-            if (r.getErrCode() < 0) {
-                if (r.getErrCode() < 0 && upload.getSize() > 0) freeSpace -= upload.getSize()-r.getOldSize();
-                ctx.writeAndFlush(new SpaceResponse(freeSpace));
-                ctx.writeAndFlush(new FilesListResponse(upload.getDstPath(), userFolder));
+                    "\n"+rq.getSrcPath()+"\n"+rq.getDstPath()+"\n"+rq.getSize()+"\n"+rq.getModified());
+            uploadTarget = rq.getDstPath();
+            Path dst = userFolder.resolve(rq.getDstPath()).resolve(rq.getSrcPath());
+            boolean exists = false;
+            try { exists = Files.exists(dst); }
+            catch (Exception ex) { ex.printStackTrace(); }
+            long curSize = exists
+                    ? Files.isDirectory(dst) ? -1L : Files.size(dst)
+                    : 0L;
+            UploadResponse rs = exists && !rq.replace()
+                    ? new UploadResponse(ERR_NO_SUCH_FILE)
+                    : new UploadResponse(dst, rq.getSize(), rq.getModified());
+            if (rs.getErrCode() < 0) {
+                int id = SRV_SUCCESS;
+                if (curSize >= 0L && rq.getSize() == 0L)
+                    freeSpace += curSize;
+                else
+                    if (rq.getSize() > 0L && freeSpace-(rq.getSize()-curSize) <= 0L)
+                        rs.setErrCode(ERR_OUT_OF_SPACE);
+                    else
+                        if (rq.getSize() > 0L)
+                            rs.setId(id = 1+startTransfer(dst.toString(), curSize, rq.getSize(), rq.getModified()));
+                if (id == SRV_SUCCESS && rs.getErrCode() < 0) {
+                    if (rq.getSize() == 0L && curSize != 0L) sendFreeSpace(ctx);
+                    ctx.writeAndFlush(new FilesListResponse(userFolder.resolve(uploadTarget)));
+                }
             }
+            ctx.writeAndFlush(rs);
+        }
+        // запрос копирования файла/папки с клиента на сервер
+        if (cloudMessage instanceof UploadDataRequest) {
+            UploadDataRequest rq = (UploadDataRequest)cloudMessage;
+
+            int id = rq.getId()-1;
+            boolean spaceChanged = rq.getSize() != transfer.get(id).getCurSize();
+            byte[] buf = rq.getData();
+            String dst = transfer.get(id).getPath();
+            boolean success = true;
+            try (
+                    BufferedOutputStream bos = new BufferedOutputStream(
+                            new FileOutputStream(dst, true), BUF_SIZE)) {
+                bos.write(buf, 0, (int)rq.getSize());
+            } catch (Exception ex) {
+                ex.printStackTrace();
+                success = false;
+            }
+            if (success) {
+                transfer.get(id).setReceived(transfer.get(id).getReceived()+rq.getSize());
+                if (transfer.get(id).getReceived() == transfer.get(id).getNewSize()) {
+                    // установить дату и время последней модификации как у оригинала
+                    if (transfer.get(id).getModified() > 0)
+                        try {
+                            success = new File(dst).setLastModified(transfer.get(id).getModified());
+                            freeSpace -= transfer.get(id).getNewSize()-transfer.get(id).getCurSize();
+                        }
+                        catch (Exception ex) {
+                            ex.printStackTrace();
+                            success = false;
+                        }
+                    transfer.remove(id);
+                }
+            }
+            UploadResponse rs = new UploadResponse(id);
+            if (success) {
+                if (spaceChanged) sendFreeSpace(ctx);
+                ctx.writeAndFlush(new FilesListResponse(userFolder.resolve(uploadTarget)));
+            } else
+                rs.setErrCode(ERR_CANNOT_COMPLETE);
+            ctx.writeAndFlush(rs);
         }
         // запрос копирования файла/папки с сервера на клиент
         if (cloudMessage instanceof DownloadRequest) {
-            DownloadRequest download = (DownloadRequest)cloudMessage;
-            System.out.println("download request:"+
-                    "\n"+download.getSrcPath()+
-                    "\n"+download.getDstPath()+
-                    "\n"+download.getSize()+
-                    "\n"+download.getModified());
-            ctx.writeAndFlush(new DownloadResponse(download.getSrcPath(), download.getDstPath(),
-                    download.getSize(), download.getModified(), userFolder));
+            DownloadRequest rq = (DownloadRequest)cloudMessage;
+            System.out.println("download request:\n"+rq.getSrcPath());
+            byte[] buf = new byte[BUF_SIZE];
+            try (BufferedInputStream bis = new BufferedInputStream(
+                    Files.newInputStream(userFolder.resolve(rq.getSrcPath())), BUF_SIZE)) {
+                int bytesRead;
+                while ((bytesRead = bis.read(buf)) > 0)
+                    ctx.writeAndFlush(new DownloadResponse(bytesRead, buf));
+            } catch (Exception ex) {
+                ex.printStackTrace();
+                ctx.writeAndFlush(new DownloadResponse(0, null));
+            }
         }
         // запрос удаления в пользовательской папке
         if (cloudMessage instanceof RemovalRequest) {
-            RemovalRequest rm = (RemovalRequest)cloudMessage;
-            System.out.println("removal request: '"+rm.getPath()+"'");
+            RemovalRequest rq = (RemovalRequest)cloudMessage;
+            System.out.println("removal request: '"+rq.getPath()+"'");
             long freed = 0;
-            try { freed = Files.size(userFolder.resolve(rm.getPath())); }
+            try { freed = Files.size(userFolder.resolve(rq.getPath())); }
             catch (IOException ex) { ex.printStackTrace(); }
-            RemovalResponse r = new RemovalResponse(rm.getPath(), userFolder);
-            ctx.writeAndFlush(r);
-            if (r.getErrCode() < 0) {
+            RemovalResponse rs = new RemovalResponse(userFolder.resolve(rq.getPath()));
+            if (rs.getErrCode() < 0) {
                 freeSpace += freed;
-                ctx.writeAndFlush(new SpaceResponse(freeSpace));
-                int i = rm.getPath().lastIndexOf(File.separatorChar);
-                ctx.writeAndFlush(new FilesListResponse(i < 0 ? "" : rm.getPath().substring(0, i), userFolder));
+                sendFreeSpace(ctx);
+                int i = rq.getPath().lastIndexOf(File.separatorChar);
+                ctx.writeAndFlush(new FilesListResponse(
+                        i < 0 ? userFolder : userFolder.resolve(rq.getPath().substring(0, i))));
             }
+            ctx.writeAndFlush(rs);
         }
+        // запрос на переименование файла/папки
+        if (cloudMessage instanceof RenameRequest) {
+            RenameRequest rq = (RenameRequest)cloudMessage;
+            RenameResponse rs = new RenameResponse(
+                    userFolder.resolve(rq.getCurName()), rq.getNewName(), rq.shouldBeReplaced());
+            if (rs.getErrCode() < 0) {
+                int i = rq.getCurName().lastIndexOf(File.separatorChar);
+                ctx.writeAndFlush(new FilesListResponse(
+                        i < 0 ? userFolder : userFolder.resolve(rq.getCurName().substring(0, i))));
+            }
+            ctx.writeAndFlush(rs);
+        }
+    }
+
+    private void sendFreeSpace(ChannelHandlerContext ctx) {
+        ctx.writeAndFlush(new SpaceResponse(freeSpace));
+    }
+
+    private int startTransfer(String path, long oldSize, long newSize, long modified) {
+        int id = 0;
+        if (transfer.size() > 0)
+            while (id < transfer.size() && transfer.get(id) != null) id++;
+        if (id == transfer.size())
+            transfer.add(new TransferOp(path, oldSize, newSize, modified));
+        else
+            transfer.set(id, new TransferOp(path, oldSize, newSize, modified));
+        return id;
     }
 }

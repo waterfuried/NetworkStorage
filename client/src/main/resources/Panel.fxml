@@ -26,11 +26,11 @@ maxHeight="-Infinity" maxWidth="-Infinity" minHeight="-Infinity" minWidth="-Infi
         <Button fx:id="btnGoBack" disable="true" onAction="#btnGoBackAction" text="←">
          <tooltip><Tooltip text="Go back" /></tooltip>
         </Button>
-        <Button fx:id="btnRefresh" onAction="#btnRefreshAction" text="⟳">
+        <Button onAction="#btnRefreshAction" text="⟳">
          <tooltip><Tooltip text="Refresh" /></tooltip>
         </Button>
     </HBox>
-    <TableView fx:id="filesTable" VBox.vgrow="ALWAYS" onKeyReleased="#keyboardHandler" onMouseClicked="#mouseHandler" />
+    <TableView fx:id="filesTable" editable="true" VBox.vgrow="ALWAYS" onKeyReleased="#keyboardHandler" onMouseClicked="#mouseHandler" />
     <properties>
         <ctrlRef><fx:reference source="controller"/></ctrlRef>
     </properties>

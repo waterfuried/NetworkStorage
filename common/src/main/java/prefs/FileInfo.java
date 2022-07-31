@@ -7,25 +7,18 @@ import java.util.*;
 
 public class FileInfo {
     private String filename;
-    private long size; //определяет также тип элемента: -1 - папка, иначе - файл
-    private LocalDateTime modified;
+    private final long size; //определяет также тип элемента: -1 - папка, иначе - файл
+    private final LocalDateTime modified;
 
     public String getFilename() { return filename; }
-    void setFilename(String filename) { this.filename = filename; }
+    public void setFilename(String filename) { this.filename = filename; }
 
     public long getSize() { return size; }
-    void setSize(long size) { this.size = size; }
 
     public LocalDateTime getModified() { return modified; }
     public long getModifiedAsLong() { return getModified().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli(); }
     public static LocalDateTime getModified(long time) {
         return LocalDateTime.ofInstant(Instant.ofEpochMilli(time), ZoneId.systemDefault()); // or ZoneOffset.UTC
-    }
-
-    public void setModified(LocalDateTime modified) { this.modified = modified; }
-    public void setModified(long modified) { this.modified = getModified(modified); }
-    public void setModified(String modified) throws NumberFormatException {
-        this.modified = getModified(Long.parseLong(modified));
     }
 
     public FileInfo(Path path) {

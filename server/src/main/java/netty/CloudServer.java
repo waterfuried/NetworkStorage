@@ -12,6 +12,11 @@ import io.netty.handler.codec.serialization.*;
 import prefs.*;
 import authService.*;
 
+import java.util.Scanner;
+
+import static prefs.Prefs.getAllExitCommands;
+import static prefs.Prefs.isExitCommand;
+
 public class CloudServer {
     public CloudServer() {
         final EventLogger logger = new EventLogger(CloudServer.class.getName(), null);
@@ -27,6 +32,7 @@ public class CloudServer {
 
         try {
             ServerBootstrap server = new ServerBootstrap();
+            //TODO: client list processing
             server.group(auth, worker)
                     .channel(NioServerSocketChannel.class)
                     .childHandler(new ChannelInitializer<SocketChannel>() {
@@ -42,7 +48,13 @@ public class CloudServer {
                         }
                     });
             ChannelFuture future = server.bind(Prefs.PORT).sync();
-            System.out.println("Server is ready");
+            logger.info("Server started");
+            logger.info("Type "+getAllExitCommands(" or ")+" to shut down");
+            Scanner sc = new Scanner(System.in);
+            boolean shutdown;
+            do { shutdown = isExitCommand(sc.nextLine()); }
+            while (!shutdown);
+            //ожидание закрытия сокета
             future.channel().closeFuture().sync();
         } catch (Exception ex) {
             logger.logError(ex);

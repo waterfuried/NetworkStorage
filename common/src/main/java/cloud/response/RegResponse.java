@@ -1,7 +1,7 @@
 package cloud.response;
 
 import cloud.CloudMessage;
-import prefs.Prefs;
+import static prefs.Prefs.ErrorCode.*;
 
 import java.io.File;
 import java.nio.file.Path;
@@ -28,13 +28,13 @@ public class RegResponse implements CloudMessage {
                 b = false;
                 ex.printStackTrace();
             }
-            if (!b) errCode = Prefs.ErrorCode.ERR_INTERNAL_ERROR.ordinal();
+            if (!b) errCode = ERR_INTERNAL_ERROR.ordinal();
         } else
             errCode = userNumber == 0
-                ? Prefs.ErrorCode.ERR_WRONG_REG.ordinal()
+                ? ERR_WRONG_REG.ordinal()
                 : userNumber == -1
-                    ? Prefs.ErrorCode.ERR_INTERNAL_ERROR.ordinal()
-                    : Prefs.ErrorCode.ERR_DB_OVERFLOW.ordinal();
+                    ? ERR_INTERNAL_ERROR.ordinal()
+                    : ERR_DB_OVERFLOW.ordinal();
     }
 
     public String getUsername() { return username; }

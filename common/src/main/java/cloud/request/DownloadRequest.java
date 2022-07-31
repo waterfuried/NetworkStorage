@@ -3,18 +3,9 @@ package cloud.request;
 import cloud.CloudMessage;
 
 public class DownloadRequest implements CloudMessage {
-    private final String srcPath, dstPath;
-    private final long size, modified;
+    private final String srcPath;
 
-    public DownloadRequest(String srcPath, String dstPath, long size, long modified) {
-        this.srcPath = srcPath;
-        this.dstPath = dstPath;
-        this.size = size;
-        this.modified = modified;
-    }
+    public DownloadRequest(String srcPath) { this.srcPath = srcPath; }
 
     public String getSrcPath() { return srcPath; }
-    public String getDstPath() { return dstPath; }
-    public long getSize() { return size; }
-    public long getModified() { return modified; }
 }
