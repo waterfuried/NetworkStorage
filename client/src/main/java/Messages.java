@@ -1,4 +1,5 @@
 import static prefs.Prefs.*;
+import static prefs.Prefs.ErrorCode.*;
 
 import javafx.scene.control.*;
 
@@ -38,9 +39,11 @@ public class Messages {
     }
 
     static void displayError(ErrorCode errCode, String title, String ... param) {
-        if (param != null)
+        if (param != null) {
+            String extra = param.length > 2 ? param[2] : "";
             displayMessage(Alert.AlertType.ERROR,
-                String.format(errMessage[errCode.ordinal()]+" - "+param[0], param[1]), title);
+                    String.format(errMessage[errCode.ordinal()] + " - " + param[0], param[1], extra), title);
+        }
     }
 
     static String getInputValue(String title, String msg, String prompt, String value) {
@@ -54,12 +57,11 @@ public class Messages {
     }
 
     // подтвердить замену существующего файла
-    static boolean confirmReplacement(boolean isFile, String name) {
-        String entry = isFile ? "File" : "Folder";
+    static boolean confirmReplacement(String name) {
         return getConfirmation(Alert.AlertType.WARNING,
-                entry + " '" + name + "' already exists at destination.\n" +
+                "File " + " '" + name + "' already exists at destination.\n" +
                         "Would you like to replace it?",
-                entry + " already exists", ButtonType.YES);
+                "File already exists", ButtonType.YES);
     }
 
     // подтвердить удаление
@@ -74,9 +76,9 @@ public class Messages {
                 "Removal confirmation", ButtonType.OK);
     }
 
-    static boolean confirmRetryCopying() {
-        return Messages.getConfirmation(Alert.AlertType.ERROR,
-                "Copy error has been occurred.\nWould you like to retry?",
-                "Copy error", ButtonType.YES);
+    static void displayWrongReplacement(String cmd, boolean isFile) {
+        displayError(ERR_CANNOT_COMPLETE, ERR_OPERATION_FAILED,
+                errMessage[ERR_WRONG_REPLACEMENT.ordinal()], cmd,
+                "\n"+(isFile ? "file" : "folder"));
     }
 }
