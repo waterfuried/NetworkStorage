@@ -26,11 +26,9 @@ public class PanelController implements Initializable {
     @FXML private Button btnLevelUp, btnGoBack;
 
     private Stack<String> prevPath;
-    private int curDiskIdx;
-    private boolean serverMode = false, editing = false;
+    private int curDiskIdx, clientFS;
+    private boolean serverMode = false, editing = false, requesting = false;
     private List<FileInfo> serverFolder;
-
-    private int savedIdx;
 
     private NeStController parentController;
 
@@ -38,18 +36,21 @@ public class PanelController implements Initializable {
         parentController = controller;
     }
 
+    List<FileInfo> getServerFolder() { return serverFolder; }
     void setServerFolder(List<FileInfo> serverFolder) { this.serverFolder = serverFolder; }
 
     void updateFreeSpace(long freeSpace) {
         nameLabel.setText("Server files ("+(freeSpace/1000/1000)+"M free)");
     }
 
-    void setServerMode() {
+    void setServerMode() { setServerMode(""); }
+
+    void setServerMode(String path) {
         serverMode = true;
         disks.setVisible(false);
-        btnLevelUp.setDisable(true);
+        btnLevelUp.setDisable(path.length() == 0);
         btnGoBack.setDisable(true);
-        setCurPath("");
+        setCurPath(path);
         if (prevPath != null) prevPath.clear();
         btnGoBack.setDisable(true);
     }
@@ -65,48 +66,48 @@ public class PanelController implements Initializable {
         btnGoBack.setDisable(true);
     }
 
-    boolean isServerMode() { return serverMode; }
+    boolean atServerMode() { return serverMode; }
 
-    void updateFilesList() {
-        updateFilesList(Paths.get(getCurPath()));
-    }
+    void updateFilesList() { updateFilesList(getCurPath()); }
 
-    void updateFilesList(Path path) {
+    void updateFilesList(String path) {
+        // отображение дубликатов в столбцах -- всего лишь один из частых глюков с TableView,
+        // другой заключается в невозможности доступа к значениям ячеек отображаемых столбцов
         try {
-            refreshCurPath(path.normalize().toAbsolutePath().toString());
-            if (filesTable.getItems() != null) filesTable.getItems().clear();
-            try (Stream<Path> ps = Files.list(path)) {
-                filesTable.getItems().addAll(ps.map(FileInfo::new).collect(Collectors.toList()));
+            int i = -1;
+            if (filesTable.getItems() != null) {
+                i = filesTable.getSelectionModel().getSelectedIndex();
+                filesTable.getItems().clear();
+            }
+            if (serverMode) {
+                refreshCurPath(path);
+                if (serverFolder != null) {
+                    filesTable.getItems().setAll(serverFolder);
+                    requesting = false;
+                }
+            } else {
+                Path p = Paths.get(path);
+                refreshCurPath(p.normalize().toAbsolutePath().toString());
+                try (Stream<Path> ps = Files.list(p)) {
+                    filesTable.getItems().addAll(ps.map(FileInfo::new).collect(Collectors.toList()));
+                }
             }
             filesTable.sort();
+            filesTable.getSelectionModel().select(i);
         } catch (IOException ex) {
             Messages.displayError(ERR_FOLDER_ACCESS_DENIED, "");
             ex.printStackTrace();
         }
     }
 
-    void updateServerFilesList(String path) {
-        // отображение дубликатов в столбцах -- всего лишь один из частых глюков с TableView,
-        // другой заключается в невозможности доступа к значениям ячеек отображаемых столбцов
-        refreshCurPath(path);
-        if (filesTable.getItems() != null) filesTable.getItems().clear();
-        if (serverFolder != null)
-            try {
-                filesTable.getItems().setAll(serverFolder);
-                filesTable.sort();
-            } catch (Exception ex) {
-                Messages.displayError(ERR_FOLDER_ACCESS_DENIED, "");
-                ex.printStackTrace();
-            }
-    }
-
-    @FXML void cmbxChangeDisk(/*ActionEvent ev*/) {
+    @FXML void cmbxChangeDisk() {
         if (disks.getSelectionModel().getSelectedIndex() == curDiskIdx) return;
         pushCurrentPath();
-        updateFilesList(Paths.get(disks.getSelectionModel().getSelectedItem()));
+        updateFilesList(disks.getSelectionModel().getSelectedItem());
         curDiskIdx = disks.getSelectionModel().getSelectedIndex();
         btnLevelUp.setDisable(true);
         btnGoBack.setDisable(prevPath.isEmpty());
+        clientFS = getFSType(Paths.get(getCurPath()));
     }
 
     void pushCurrentPath() {
@@ -115,64 +116,69 @@ public class PanelController implements Initializable {
         if (btnGoBack.isDisable()) btnGoBack.setDisable(false);
     }
 
-    String getParentPath(String path) {
-        int i = path.lastIndexOf(File.separatorChar);
-        return i < 0 ? "" : path.substring(0, i);
-    }
-
-    @FXML void btnLevelUpAction(/*ActionEvent ev*/) {
+    @FXML void btnLevelUpAction() {
         pushCurrentPath();
         boolean atRoot;
         if (serverMode) {
-            String parentPath = getParentPath(getCurPath());
-            atRoot = parentPath.length() == 0;
+            int i = getCurPath().lastIndexOf(File.separatorChar);
+            atRoot = i < 0;
+            String parentPath = atRoot ? "" : getCurPath().substring(0, i);
+            requesting = true;
             parentController.requestFiles(parentPath);
         } else {
             Path parentPath = Paths.get(getCurPath()).getParent();
             atRoot = Paths.get(parentPath.toString()).getParent() == null;
-            updateFilesList(parentPath);
+            updateFilesList(parentPath.toString());
         }
         btnLevelUp.setDisable(atRoot);
     }
 
-    @FXML void btnGoBackAction(/*ActionEvent ev*/) {
+    @FXML void btnGoBackAction() {
         boolean atRoot;
         if (serverMode) {
             String prev = prevPath.pop();
             atRoot = prev.length() == 0;
+            requesting = true;
             parentController.requestFiles(prev);
         } else {
             Path prev = Paths.get(prevPath.pop());
             atRoot = Paths.get(prev.toString()).getParent() == null;
-            updateFilesList(prev);
+            updateFilesList(prev.toString());
         }
         btnGoBack.setDisable(prevPath.isEmpty());
         btnLevelUp.setDisable(atRoot);
     }
 
-    @FXML void btnRefreshAction(/*ActionEvent actionEvent*/) {
-        if (serverMode)
+    @FXML void btnRefreshAction() {
+        if (serverMode) {
+            requesting = true;
             parentController.requestFiles(getCurPath());
-        else
-            updateFilesList(Paths.get(getCurPath()));
+        } else
+            updateFilesList();
     }
 
     String getSelectedFilename() {
-        return filesTable.getSelectionModel().getSelectedItem() != null
-                ? filesTable.getSelectionModel().getSelectedItem().getFilename()
-                : "";
+        return filesTable.getSelectionModel().getSelectedItem().getFilename();
     }
 
-    Long getSelectedFileSize() {
-        return filesTable.getSelectionModel().getSelectedItem() != null
-                ? filesTable.getSelectionModel().getSelectedItem().getSize()
-                : null;
+    long getSelectedFileSize() {
+        return filesTable.getSelectionModel().getSelectedItem().getSize();
     }
+
+    long getSelectedFileTime() {
+        return filesTable.getSelectionModel().getSelectedItem().getModifiedAsLong();
+    }
+
+    boolean isFileSelected() {
+        return filesTable.getSelectionModel().getSelectedItem().getSize() >= 0L;
+    }
+
+    boolean isFile(int idx) { return filesTable.getItems().get(idx).getSize() >= 0L; }
 
     String getCurPath() { return curPath.getText(); }
     void setCurPath(String path) {
         refreshCurPath(path);
-        if (serverMode) updateServerFilesList(path); else updateFilesList(Paths.get(path));
+        updateFilesList(path);
     }
 
     String getFullSelectedFilename() {
@@ -181,11 +187,10 @@ public class PanelController implements Initializable {
 
     TableView<FileInfo> getFilesTable() { return filesTable; }
 
-    int getSavedIdx() { return savedIdx; }
-
-    void setSavedIdx(int savedIdx) { this.savedIdx = savedIdx; }
-
     void setEditing(boolean editing) { this.editing = editing; }
+
+    public boolean hasRequest() { return requesting; }
+    public void createRequest() { requesting = true; }
 
     int getIndexOf(String entryName) {
         for (int i = 0; i < filesTable.getItems().size(); i++)
@@ -199,6 +204,8 @@ public class PanelController implements Initializable {
         return -1;
     }
 
+    int getClientFS() { return serverMode ? FS_UNK : clientFS; }
+
     void refreshCurPath(String path) {
         curPath.setText(path);
         if (curPath.getTooltip() == null) {
@@ -211,15 +218,6 @@ public class PanelController implements Initializable {
         }
     }
 
-    int getCurDisk() { return curDiskIdx; }
-
-    int getSizeColumn() {
-        int i = 0;
-        while (i < filesTable.getColumns().size() &&
-               !filesTable.getColumns().get(i).getText().equals("Size")) i++;
-        return i < filesTable.getColumns().size() ? i : -1;
-    }
-
     // методы обработки выбранного элемента списка
     /**
      * активация - нажатие Enter или двойной щелчок<br><br>
@@ -229,61 +227,39 @@ public class PanelController implements Initializable {
      */
     void processItem() {
         if (getSelectedFilename().length() == 0) return;
-        Path p = Paths.get(getCurPath(), getSelectedFilename());
-        if ((long)filesTable.getColumns().get(getSizeColumn())
-                  .getCellData(filesTable.getSelectionModel().getSelectedIndex()) < 0L) {
-            if (serverMode)
-                parentController.requestFiles(p.toString());
-            else
-                updateFilesList(p);
+        if (getSelectedFileSize() < 0L) {
+            if (serverMode) {
+                requesting = true;
+                parentController.requestFiles(getFullSelectedFilename());
+            } else {
+                updateFilesList(getFullSelectedFilename());
+                filesTable.getSelectionModel().clearSelection();
+            }
             pushCurrentPath();
             btnLevelUp.setDisable(false);
         }
     }
 
     /**
-     * удаление (по нажатию Delete):<br><br>
-     *    данный метод удаляет файл (папку) только на клиенте
-     *    и вызывается не напрямую, а из метода родительского
-     *    контроллера tryRemove - пояснение см. в его описании
+     * проверить возможность переименования файла (папки),
+     * и при ее наличии выполнить переименование, но только на клиенте -
+     * переименованием на сервере занимается метод родительского контроллера
+     * @param curName   текущее имя элемента
+     * @param newName   новое имя элемента
+     * @param restore   восстановить текущее имя, если оно неприемлемо -
+     *                  используется при правке имени непосредственно
+     *                  в строке таблицы со списком файлов
+     * @return 0 = переименование завершено (с любым исходом),<br>
+     *         1 = переименование можно выполнять с заменой совпадений
      */
-    void removeItem() {
-        try {
-            Files.delete(Paths.get(getCurPath(), getSelectedFilename()));
-            updateFilesList(Paths.get(getCurPath()));
-            filesTable.getSelectionModel().select(savedIdx);
-        } catch (IOException ex) {
-            ErrorCode errCode = ERR_NO_SUCH_FILE;
-            if (ex instanceof DirectoryNotEmptyException) errCode = ERR_NOT_EMPTY;
-            Messages.displayError(errCode, ERR_OPERATION_FAILED, COM_REMOVE);
-        }
-    }
-
-    /**
-     * переименование - и только: перемещения не допускаются (TODO),
-     * по меньшей мере до реализации возможности переключать
-     * любую(!) панель между клиентским компьютером и папкой
-     * пользователя на сервере - именно такой подход позволит
-     * избежать избыточного анализа вводимых строк с новым именем.
-     * <br><br>
-     * переименовывает файл (папку) только на клиенте,
-     * переименованием на сервере занимается
-     * метод родительского контроллера
-     * @param curName     текущее имя элемента
-     * @param newName     новое имя элемента
-     * @return  0 = переименование завершено (с любым исходом),<br>
-     *          1 = переименование можно выполнять с заменой совпадений,<br>
-     *         -1 = переименование можно выполнять, но наличие совпадений
-     *              не может быть установлено
-     */
-    int renameItem(String curName, String newName, boolean restore) {
-        if (newName.equals(curName)) return 0;
+    boolean renameItem(String curName, String newName, boolean restore) {
+        if (newName.equals(curName)) return false;
         boolean wrongName = newName.length() == 0 || hasInvalidCharacters(newName),
                 stayHere = newName.equals("."), levelUp = newName.equals("..");
 
         if (filesTable.getItems().size() == 1 && !wrongName && !levelUp && !stayHere) {
-            if (!serverMode) rename(Paths.get(getCurPath(), curName), newName, false);
-            return 1;
+            if (!serverMode) rename(Paths.get(getCurPath(), curName), newName);
+            return true;
         }
 
         if (restore) {
@@ -294,73 +270,32 @@ public class PanelController implements Initializable {
             filesTable.refresh();
         }
 
-        if (stayHere) return 0;
+        if (stayHere) return false;
         if (wrongName || levelUp) {
             // чтобы дождаться факта закрытия диалога (и только после него что-либо сделать),
             // нужно вызывать его непосредственно - не в отдельном потоке обработки графики
             if (newName.length() > 0)
                 Messages.displayError(wrongName ? ERR_INVALID_NAME : ERR_REPLACEMENT_NOT_ALLOWED, "");
-            return 0;
+            return false;
         }
 
-        // если элемент с новым именем отсутствует в списке,
-        // в случае extFS он действительно отсутствует,
-        // в случае же NTFS/FAT он либо отсутствует,
-        // либо присутствует в единственном экземпляре -
-        // какие-либо символы в его имени имеют другой регистр
-        // и без попытки изменения его имени средствами ФС
-        // невозможно однозначно ответить на вопрос о его существовании
-        int newType = checkPresence(newName);
-        if (newType < 0) {
-            int n = serverMode ? -1 : rename(Paths.get(getFullSelectedFilename()), newName, false);
-            if (n < 0) return -1;
-            switch (ErrorCode.values()[n]) {
-                case ERR_NO_SUCH_FILE:
-                    n = getIndexOfAnyMatch(newName);
-                    if (n < filesTable.getItems().size())
-                        newType = filesTable.getItems().get(n).getSize() < 0L ? 1 : 0;
-                    break;
-                case ERR_FOLDER_ACCESS_DENIED:
-                    Messages.displayError(ERR_FOLDER_ACCESS_DENIED, ERR_OPERATION_FAILED);
-                    return 0;
+        int FSType = serverMode ? parentController.getServerFS() : clientFS,
+            newIdx = FSType == FS_EXTFS ? getIndexOf(newName) : getIndexOfAnyMatch(newName);
+        boolean canRename = newIdx < 0 || (FSType == FS_NTFS && curName.equalsIgnoreCase(newName));
+        if (!canRename)
+            if (isFile(newIdx) && isFileSelected()) {
+                if (Messages.confirmReplacement(newName)) canRename = true;
+            } else
+                Messages.displayWrongReplacement(COM_RENAME, isFile(newIdx));
+
+        if (canRename) {
+            if (!serverMode) {
+                rename(Paths.get(getFullSelectedFilename()), newName);
+                updateFilesList();
             }
+            return true;
         }
-        if (isRenameable(newName, newType)) {
-            if (!serverMode) rename(Paths.get(getFullSelectedFilename()), newName, true);
-            return 1;
-        }
-        return 0;
-    }
-
-    /**
-     * проверка существования элемента в списке;
-     * гарантирует только то, что существует (отстутсвует) элемент
-     * точно с таким же именем - с учетом регистра символов в нем
-     * @param name     имя элемента
-     * @return -1, если элемент отсутствует,<br>
-     *          0, если элемент является файлом,<br>
-     *          1, если элемент является папкой
-     */
-    int checkPresence(String name) {
-        for (FileInfo fi : filesTable.getItems())
-            if (fi.getFilename().equals(name))
-                return fi.getSize() >= 0 ? 0 : 1;
-        return -1;
-    }
-
-    boolean isRenameable(String newName, int newType) {
-        boolean wrongReplace = false, canRename = false;
-        if (newType == 0) { // элемент с новым именем - файл
-            wrongReplace = filesTable.getItems()
-                    .get(filesTable.getSelectionModel().getSelectedIndex()).getSize() < 0;
-            if (!wrongReplace && Messages.confirmReplacement(true, newName))
-                canRename = true;
-        }
-        if (newType == 1) // ...папка
-            Messages.displayError(ERR_REPLACEMENT_NOT_ALLOWED, "");
-        if (wrongReplace)
-            Messages.displayError(ERR_WRONG_REPLACEMENT, "");
-        return canRename;
+        return false;
     }
 
     @FXML void keyboardHandler(KeyEvent ev) {
@@ -378,6 +313,7 @@ public class PanelController implements Initializable {
     @FXML void mouseHandler(MouseEvent ev) {
         if (ev.getClickCount() == 2) processItem();
     }
+
     /*
         Урок 3. Фреймворк Netty
         1. Взять код с урока и добавить логику навигации по папкам на клиенте и на сервере.
@@ -406,12 +342,12 @@ public class PanelController implements Initializable {
         fileNameColumn.setOnEditCancel(ev -> editing = false);
         fileNameColumn.setOnEditCommit(ev -> {
             editing = true;
-            int replace = renameItem(ev.getOldValue(), ev.getNewValue(), true);
-            if (replace != 0)
-                if (serverMode)
-                    parentController.renameEntry(ev.getNewValue(), replace == 1);
-                else {
-                    updateFilesList(Paths.get(getCurPath()));
+            if (renameItem(ev.getOldValue(), ev.getNewValue(), true))
+                if (serverMode) {
+                    requesting = true;
+                    parentController.renameEntry(ev.getNewValue());
+                } else {
+                    updateFilesList();
                     filesTable.getSelectionModel().select(getIndexOf(ev.getNewValue()));
                     parentController.onPanelUpdated();
                 }
@@ -447,6 +383,7 @@ public class PanelController implements Initializable {
         filesTable.getColumns().addAll(fileNameColumn, fileSizeColumn, fileDateColumn);
         filesTable.getSortOrder().add(fileSizeColumn);
 
-        updateFilesList(startPath);
+        updateFilesList(".");
+        clientFS = getFSType(Paths.get(getCurPath()));
     }
 }

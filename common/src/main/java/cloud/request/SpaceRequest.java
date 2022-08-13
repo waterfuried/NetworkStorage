@@ -3,7 +3,6 @@ package cloud.request;
 import cloud.CloudMessage;
 
 /**
- * запрос свободного места в папке пользователя
+ * запрос количества свободного места в папке пользователя
  */
-public class SpaceRequest implements CloudMessage {
-}
+public class SpaceRequest implements CloudMessage {}

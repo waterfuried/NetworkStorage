@@ -1,7 +1,6 @@
 package prefs;
 
-import java.io.File;
-import java.io.IOException;
+import java.io.*;
 import java.nio.file.*;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
@@ -38,6 +37,9 @@ public class Prefs {
     public static final String COM_DOWNLOAD = "download";
     public static final String COM_REMOVE = "remove";
     public static final String COM_RENAME = "rename";
+    public static final String COM_COPY = "copy";
+    public static final String COM_MOVE = "move";
+    public static final String COM_FS = "fs";
 
     // команды терминала
     public static final String COM_TERM_CAT = "cat";
@@ -81,7 +83,7 @@ public class Prefs {
             "Internal server error;\ntry to repeat operation later",
             "Registration error",
             "Number of users already at maximum, please inform administrator",
-            "It is not possible to replace a file with a folder",
+            "%s with same name already exists.\nOnly file can be replaced with a file",
             "There are invalid characters in the name",
             "Folder access denied",
             "Rename operation does not support moving"
@@ -100,6 +102,11 @@ public class Prefs {
 
     // приглашение ввода в текстовом терминале
     public static final String terminalPrompt = ">> ";
+
+    // тип ФС
+    public static final int FS_EXTFS = 0;
+    public static final int FS_NTFS = 1;
+    public static final int FS_UNK = -1;
 
     /*
       методы обработки команд
@@ -225,12 +232,18 @@ public class Prefs {
 
     /**
      * копирование (создание) файла нулевого размера или папки
-     * @param dst  имя копируемого файла/папки
-     * @param size размер копируемого файла/папки
+     * @param dst       имя копируемого файла/папки
+     * @param size      размер копируемого файла/папки
+     * @param modified  дата и время последнего изменения файла/папки
      * @throws IOException
      */
-    public static void makeFolderOrZero(Path dst, long size) throws IOException {
-        if (size < 0L) Files.createDirectory(dst); else resetFile(dst);
+    public static void makeFolderOrZero(Path dst, long size, long modified) throws IOException {
+        if (size < 0L)
+            Files.createDirectory(dst);
+        else {
+            resetFile(dst);
+            if (!applyDateTime(dst.toString(), modified)) throw new IOException();
+        }
     }
 
     /**
@@ -239,10 +252,9 @@ public class Prefs {
      * независимо от наличия/отсутствия у них содержимого
      * @param curName         текущее имя файла/папки
      * @param newName         новое имя файла/папки
-     * @param replaceExisting замещать существующий файл при совпадении текущего и нового имен
      * @return  код ошибки или -1, если ошибки нет
      */
-    public static int rename(Path curName, String newName, boolean replaceExisting) {
+    public static int rename(Path curName, String newName) {
         int errCode = -1;
         Path p = curName;
         try {
@@ -254,16 +266,13 @@ public class Prefs {
                 do {
                     tmp = Paths.get(curName.toString()
                                     .substring(0, curName.toString().lastIndexOf(File.separatorChar)),
-                            "_tmp_" + System.nanoTime());
+                            createTemporaryName());
                     try { Files.move(curName, tmp); }
                     catch (Exception ex) { done = false; }
                 } while (!done);
                 p = tmp;
             }
-            if (replaceExisting)
-                Files.move(p, p.resolveSibling(newName), StandardCopyOption.REPLACE_EXISTING);
-            else
-                Files.move(p, p.resolveSibling(newName));
+            Files.move(p, p.resolveSibling(newName), StandardCopyOption.REPLACE_EXISTING);
         /*
           1. поскольку пользователь может использовать файловый менеджер
              и в нем находиться внутри папки, имя которой он пытается
@@ -274,16 +283,75 @@ public class Prefs {
              NB: одно и то же исключение вылезет при попытках переименовать файл в файл/папку,
              и папку в папку/файл
         */
-        } catch (FileAlreadyExistsException ex) {
-            errCode = ERR_NO_SUCH_FILE.ordinal();
         } catch (IOException ex) {
             errCode = ERR_CANNOT_COMPLETE.ordinal();
         }
         return errCode;
     }
 
+    /**
+     * копировать/переместить файл/папку локально
+     * @param src    путь к исходному файлу
+     * @param dst    путь к конечному файлу
+     * @param FSType тип локальной ФС (определяется извне)
+     * @param move   признак перемещения файла
+     * @throws IOException если при выполнении произошла ошибка
+     */
+    public static void copy(Path src, Path dst, int FSType, boolean move) throws IOException {
+        if (FSType == FS_NTFS && Files.exists(dst)) Files.delete(dst);
+        long modified = Files.getLastModifiedTime(src).toMillis();
+        if (move) Files.move(src, dst); else Files.copy(src, dst);
+        applyDateTime(dst.toString(), modified);
+    }
+
+    // установить дату и время последней модификации
+    public static boolean applyDateTime(String entry, long modified) {
+        return new File(entry).setLastModified(modified);
+    }
+
+    // создать временное имя
+    private static String createTemporaryName() { return "_tmp_" + System.nanoTime(); }
+
+    /**
+     * определить тип ФС
+     * @param rootPath любой каталог ФС
+     * @return -1, если ФС определить не удалось<br>
+     * 0, если ФС типа extFS<br>
+     * 1, если ФС типа FAT/NTFS
+     */
+    public static int getFSType(Path rootPath) {
+        Path p1 = null, p2 = null;
+        try {
+            String name, upperName;
+            do {
+                name = createTemporaryName();
+                p1 = rootPath.resolve(name);
+            } while (Files.exists(p1));
+            Files.write(p1, new byte[]{});
+            upperName = name.toUpperCase();
+            p2 = p1.resolveSibling(upperName);
+            if (Files.exists(p2)) {
+                boolean same = Files.isSameFile(p1, p2);
+                Files.delete(p1);
+                return same ? FS_NTFS : FS_EXTFS;
+            }
+            // создание нового файла вообще может не произойти и по другим причинам -
+            // диск защищен от записи, диск полон, ошибка создания (сбойный сектор)
+            Files.write(p2, new byte[]{}, StandardOpenOption.CREATE_NEW);
+            Files.delete(p2);
+            return FS_EXTFS;
+        } catch (Exception ex) {
+            try {
+                if (p2 != null && Files.exists(p2) && !Files.isDirectory(p2)) Files.delete(p2);
+                if (p1 != null && Files.exists(p1)) Files.delete(p1);
+            } catch (IOException ex2) {}
+            return (ex instanceof FileAlreadyExistsException) ? FS_NTFS : FS_UNK;
+        }
+    }
+
+
     /*
-     методы кодирования информации
+      методы кодирования информации
     */
     // простое кодирование сложением по модулю 2
     public static String encode(String s, boolean direct) {
@@ -311,5 +379,11 @@ public class Prefs {
         int h = 0;
         for (int i = 0; i < s.length(); i++) h += s.charAt(i)*Math.pow(2,s.length()-i-1);
         return h;
+    }
+
+    // преобразовать строку к виду с заглавной буквы
+    public static String capitalize(String s) {
+        if (s == null || s.trim().length() == 0) return s;
+        return s.substring(0, 1).toUpperCase()+s.substring(1);
     }
 }

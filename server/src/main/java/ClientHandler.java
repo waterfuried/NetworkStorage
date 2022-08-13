@@ -19,6 +19,7 @@ public class ClientHandler {
     private final EventLogger logger;
     private final ArrayList<TransferOp> transfer = new ArrayList<>();
     private String uploadTarget;
+    private int FSType = FS_UNK;
 
     public ClientHandler(EchoServer server, Socket socket, AuthService dbs, EventLogger logger) throws IOException {
         is = new DataInputStream(socket.getInputStream());
@@ -49,17 +50,23 @@ public class ClientHandler {
     // для избавления от обработки лишних запросов после авторизации, регистрации,
     // а также успешно выполненных операций с файлами клиенту, помимо ответа
     // на соответствующий запрос, отправляются также обновленния списка файлов
-    // в его папке и размер свободного места в ней
+    // в его папке и размер свободного места в ней,
+    // при авторизации/регистрации - также извещение о типе ФС сервера
     private void sendFreeSpace() {
         sendResponse(getCommand(SRV_ACCEPT, COM_GET_SPACE, freeSpace+""));
     }
-    private void sendFilesList(String folder) {
+    private void sendFilesList(String folder, boolean extractPath) {
         Path path = userFolder;
         int errCode = -1, sz = 0;
-        String list = "";
+        String list = "", ofFolder = folder;
         if (!folder.equals("."))
-            try { path = path.resolve(folder); }
-            catch (InvalidPathException ex) { errCode = ERR_NO_SUCH_FILE.ordinal(); }
+            try {
+                int i = extractPath ? folder.lastIndexOf(File.separatorChar) : -1;
+                ofFolder = i < 0
+                        ? extractPath ? "" : folder
+                        : folder.substring(0,i);
+                path = path.resolve(ofFolder);
+            } catch (InvalidPathException ex) { errCode = ERR_NO_SUCH_FILE.ordinal(); }
         if (errCode < 0) {
             //List<FileInfo> list = FileInfo.getItemsInfo(path);
             // можно заменить Files.list(path).map(p -> new FileInfo(p)).toList();
@@ -77,9 +84,14 @@ public class ClientHandler {
             }
         }
         sendResponse(errCode < 0
-                ? getCommand(SRV_ACCEPT, COM_GET_FILES, sz + " " + folder + (sz == 0 ? "" : " "+list))
+                ? getCommand(SRV_ACCEPT, COM_GET_FILES, sz +" "+ ofFolder + (sz == 0 ? "" : " "+list))
                 : getCommand(SRV_REFUSE, ERR_NO_SUCH_FILE+""));
     }
+    private void sendFSType() {
+        if (FSType == FS_UNK) FSType = getFSType(userFolder);
+        sendResponse(getCommand(SRV_ACCEPT, COM_FS, FSType+""));
+    }
+
     private void sendOpFailedResponse(int errCode) {
         sendResponse(getCommand(SRV_REFUSE, errCode));
     }
@@ -138,7 +150,8 @@ public class ClientHandler {
                 freeSpace = MAXSIZE - FileInfo.getSizes(userFolder);
                 sendResponse(getCommand(SRV_ACCEPT, SRV_SUCCESS + "", newUser));
                 sendFreeSpace();
-                sendFilesList(".");
+                sendFilesList(".", false);
+                sendFSType();
             } else
                 sendOpFailedResponse(errCode);
         }
@@ -179,7 +192,8 @@ public class ClientHandler {
                 freeSpace = MAXSIZE;
                 sendResponse(getCommand(SRV_ACCEPT, SRV_SUCCESS + "", newUser));
                 sendFreeSpace();
-                sendFilesList(".");
+                sendFilesList(".", false);
+                sendFSType();
             } else
                 sendOpFailedResponse(errCode);
         }
@@ -191,19 +205,18 @@ public class ClientHandler {
         // запрос содержимого папки пользователя
         if (s.startsWith(getCommand(COM_GET_FILES))) {
             String[] arg = cmd.split(" ");
-            sendFilesList(arg.length > 1 ? arg[1] : ".");
+            sendFilesList(arg.length > 1 ? arg[1] : ".", false);
         }
 
         // запрос количества свободного места в папке пользователя
         if (s.startsWith(getCommand(COM_GET_SPACE))) sendFreeSpace();
 
         // запрос копирования файла/папки на сервер
-        // /upload source_name destination_path size date [1=replace existing]
+        // /upload source_name destination_path size date
         // "." for root destination
         if (s.startsWith(getCommand(COM_UPLOAD))) {
             String[] arg = cmd.split(" ");
             long size, modified;
-            boolean replace = arg.length > 5;
             try {
                 size = Long.parseLong(arg[3]);
                 modified = Long.parseLong(arg[4]);
@@ -215,27 +228,18 @@ public class ClientHandler {
             uploadTarget = arg[2].equals(".") ? "" : decodeSpaces(arg[2]);
             Path dst = userFolder.resolve(uploadTarget).resolve(arg[1]);
 
-            // перед выполнением проверять наличие файла/папки
             int errCode = -1;
-            boolean exists = false;
-            try { exists = Files.exists(dst); }
-            catch (Exception ex) { ex.printStackTrace(); }
-            long curSize = exists ? Files.isDirectory(dst) ? -1L : Files.size(dst) : 0L;
-            if (exists && !replace) {
-                sendOpFailedResponse(ERR_NO_SUCH_FILE.ordinal(), COM_UPLOAD);
-                return;
-            }
+            long curSize = 0L;
+            try {
+                if (Files.exists(dst))
+                    curSize = Files.isDirectory(dst) ? -1L : Files.size(dst);
+            } catch (Exception ex) { ex.printStackTrace(); }
 
             // создать новую папку или файл нулевого размера
-            try {
-                makeFolderOrZero(dst, size);
-                // обновление даты и времени: если по какой-то причине оно не произошло,
-                // операция в целом не выполнена
-                if (!new File(dst.toString()).setLastModified(modified))
-                    errCode = ERR_CANNOT_COMPLETE.ordinal();
-            } catch (Exception ex) {
-                errCode = ERR_CANNOT_COMPLETE.ordinal();
-            }
+            // обновление даты и времени: если по какой-то причине оно не произошло,
+            // операция в целом не выполнена
+            try { makeFolderOrZero(dst, size, modified); }
+            catch (Exception ex) { errCode = ERR_CANNOT_COMPLETE.ordinal(); }
             if (errCode < 0) {
                 int id = SRV_SUCCESS;
                 if (curSize >= 0L && size == 0L)
@@ -250,7 +254,7 @@ public class ClientHandler {
                             id = 1+startTransfer(dst.toString(), curSize, size, modified);
                 if (id == SRV_SUCCESS && errCode < 0) {
                     if (size != curSize) sendFreeSpace();
-                    sendFilesList(arg[2]);
+                    sendFilesList(arg[2], false);
                 }
                 sendResponse(getCommand(SRV_ACCEPT, COM_UPLOAD, id+""));
                 if (errCode < 0) return;
@@ -284,11 +288,11 @@ public class ClientHandler {
                 if (transfer.get(id).getReceived() == transfer.get(id).getNewSize()) {
                     try {
                         // установить дату и время последней модификации как у оригинала
-                        success = new File(dst).setLastModified(transfer.get(id).getModified());
+                        success = applyDateTime(dst, transfer.get(id).getModified());
                         if (success) {
                             freeSpace -= transfer.get(id).getNewSize()-transfer.get(id).getCurSize();
                             if (spaceChanged) sendFreeSpace();
-                            sendFilesList(uploadTarget.length() == 0 ? "." : uploadTarget);
+                            sendFilesList(uploadTarget.length() == 0 ? "." : uploadTarget, false);
                             sendResponse(getCommand(SRV_ACCEPT, COM_UPLOAD, SRV_SUCCESS + ""));
                         }
                     } catch (Exception ex) {
@@ -305,7 +309,7 @@ public class ClientHandler {
         // копирование файла с сервера: только отправка файлов ненулевого размера
         // /download source_path
         if (s.startsWith(getCommand(COM_DOWNLOAD))) {
-            String[] arg = cmd.split(" ", 2);
+            String[] arg = cmd.split(" ", 0);
             arg[1] = decodeSpaces(arg[1]);
             byte[] buf = new byte[BUF_SIZE];
             try (BufferedInputStream bis = new BufferedInputStream(
@@ -338,24 +342,50 @@ public class ClientHandler {
             if (errCode < 0) {
                 freeSpace += freed;
                 sendFreeSpace();
-                int i = arg[1].lastIndexOf(File.separatorChar);
-                sendFilesList(i < 0 ? "." : arg[1].substring(0, i));
+                sendFilesList(arg[1], true);
                 sendResponse(getCommand(SRV_ACCEPT, COM_REMOVE, SRV_SUCCESS + ""));
             } else
                 sendOpFailedResponse(errCode, COM_REMOVE);
         }
 
         // запрос переименования файла/папки
-        // /rename current_name_with_path new_name [1=replace existing]
+        // /rename current_name_with_path new_name
         if (s.startsWith(getCommand(COM_RENAME))) {
             String[] arg = cmd.split(" ");
-            int i = arg[1].lastIndexOf(File.separatorChar);
-            int errCode = rename(userFolder.resolve(arg[1]), arg[2], arg.length > 3);
+            int errCode = rename(userFolder.resolve(arg[1]), arg[2]);
             if (errCode < 0) {
-                sendFilesList(i < 0 ? "." : arg[1].substring(0, i));
+                sendFilesList(arg[1], true);
                 sendResponse(getCommand(SRV_ACCEPT, COM_RENAME, SRV_SUCCESS + ""));
             } else
                 sendOpFailedResponse(errCode, COM_RENAME);
+        }
+
+        // запрос локального копирования/перемещения файла/папки
+        // /copy source_path destination_path [1=move]
+        if (s.startsWith(getCommand(COM_COPY))) {
+            String[] arg = cmd.split(" ");
+            if (arg.length == 3 && freeSpace-Files.size(userFolder.resolve(arg[1])) <= 0L)
+                sendOpFailedResponse(ERR_OUT_OF_SPACE.ordinal(), COM_COPY);
+            else
+                try {
+                    int i = arg[1].lastIndexOf(File.separatorChar);
+                    String entry = i < 0 ? arg[1]: arg[1].substring(i+1);
+                    copy(userFolder.resolve(arg[1]),
+                            (arg[2].equals(".") ? userFolder : userFolder.resolve(arg[2])).resolve(entry),
+                            FSType, arg.length > 3);
+                    sendFilesList(arg[2], false);
+                    if (arg.length > 3)
+                        sendFilesList(arg[1], true);
+                    else {
+                        freeSpace -= Files.size(userFolder.resolve(arg[1]));
+                        sendFreeSpace();
+                    }
+                    sendResponse(getCommand(SRV_ACCEPT, arg.length > 3 ? COM_MOVE : COM_COPY,
+                            SRV_SUCCESS + "", encodeSpaces(entry)));
+                } catch (Exception ex) {
+                    sendOpFailedResponse(ERR_CANNOT_COMPLETE.ordinal(),
+                            arg.length > 3 ? COM_MOVE : COM_COPY);
+                }
         }
     }
 }

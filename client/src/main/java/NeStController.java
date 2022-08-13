@@ -27,15 +27,15 @@
             NEST_ERR код-ошибки [имя_команды/запроса] -
               0 - не верное имя пользователя или пароль,
               1 - запрошенный файл/папка отсутствует,
-              2 - недостаточно места для загрузки файла,
+              2 - недостаточно места для размещения файла,
               3 - ошибка чтения файла/папки,
               4 - полученный список файлов содержит ошибки,
               5 - папка не пуста и не может быть удалена,
               6 - внутренняя ошибка сервера,
               7 - ошибка регистрации пользователя,
               8 - количество зарегистрированных пользователей достигло максимума,
-              9 - невозможно заменить файл папкой,
-             10 - новое имя файла/папки содержит недопустимые символы,
+              9 - недопустимое замещение - файл может быть заменен только файлом,
+             10 - имя файла/папки содержит недопустимые символы,
              11 - доступ к папке не возможен,
              12 - команда переименования не предназначена для перемещения.
           ! в процессе разработки в протокол было внесено дополнение:
@@ -66,22 +66,18 @@
        размер в байтах возвращается в значении доп. кода.
     5. копировать файл/папку с клиента на сервер:
        5.1. инициировать передачу
-         /upload имя-файла/папки-на-компьютере-клиента путь-на-сервере размер дата [1]*
-             *замена существующего файла: если аргумент не указан, будет выведен запрос
+         /upload имя-файла/папки-на-компьютере-клиента путь-на-сервере размер дата
        сервер возвращает:
         - 0, при успешном создании передаваемго элемента, если это файл нулевого размера или папка,
              а также после завершения передачи данных (файла ненулевого размера)
         - id передачи данных, если передаваемый элемент - файл ненулевого размера
         - код ошибки:
             - не удалось создать файл/папку (ошибка ФС сервера),
-            - недостаточно места для сохранения копируемого файла,
-            - файл/папка уже существует (возможны варианты, например, попытка скопировать папку,
-              когда существует файл с тем же именем, допустимый вариант - замена файла файлом,
-              но в этом случае нужно подтверждение от пользователя)
+            - недостаточно места для сохранения копируемого файла
        5.2. передать блок данных файла на сервер
          /upld id размер-блока-данных блок-данных
-    6. копировать файл/папку с сервера на клиент:
-         /download путь-с-именем-файла/папки-на-сервере
+    6. копировать/переместить файл/папку с сервера на клиент:
+         /download путь-с-именем-файла/папки-на-сервере [1=переместить]
     7. удалить файл/папку на сервере:
          /remove имя_файла/папки
        папка не может быть удалена, если она не пуста
@@ -90,7 +86,11 @@
          /reg логин пароль имя-пользователя email
        после доп. кода 0 возвращается имя пользователя, если он зарегистрирован
     9. переименовать файл/папку
-         /rename путь_к_существующему_имени новое_имя [1=заменять при совпадении имени]
+         /rename путь_к_существующему_имени новое_имя
+   10. тип ФС сервера (0=extFS-подобная, 1=FAT/NTFS-подобная, -1=не удалось определить)
+         /fs
+   11. копировать/переместить файл
+         /copy путь_к_исходному_имени путь_назначения [1=переместить]
 
     команды 5 и 6 работают по принципу "1 за раз" - например,
       при копировании папки на сервер (размер указывается как -1)
@@ -120,19 +120,22 @@ import java.io.*;
 import java.net.URL;
 import java.nio.file.*;
 import java.util.*;
-import java.util.concurrent.Semaphore;
+import java.util.concurrent.*;
 
 import static prefs.Prefs.*;
 import static prefs.Prefs.ErrorCode.*;
 
-public class NeStController implements Initializable {
+import com.github.kwhat.jnativehook.*;
+import com.github.kwhat.jnativehook.keyboard.*;
+
+public class NeStController implements Initializable, NativeKeyListener {
     @FXML private VBox clientView, serverView;
     @FXML private Menu ActionMenu;
     @FXML private MenuItem
             menuItemLogIn, menuItemLogOut,
             menuItemUpload, menuItemDownload,
-            menuItemRename, menuItemRemove,
-            menuItemViewLeft, menuItemViewRight;
+            menuItemRename, menuItemRemove;
+    @FXML private CheckMenuItem menuItemViewLeft, menuItemViewRight;
 
     private Network network;
     private NettyNetwork nettyNetwork;
@@ -143,13 +146,25 @@ public class NeStController implements Initializable {
     private PanelController cliCtrl, srvCtrl;
 
     private boolean authorized = false, clientFocused, serverFocused;
+    private boolean isShiftDown;
     private final boolean useNetty = false;
+    private int serverFS;
 
     private String user, newName; // имя пользователя; новое имя при переименовании файла/папки
     private int dragSrc; // панель-источник перетаскивания: 0=клиент, 1=сервер
     private long restSize = 0L; // размер оставшихся данных для передачи с сервера клиенту
+    private long freeSpace;
 
-    public boolean isAuthorized() { return authorized; }
+    public boolean authorized() { return authorized; }
+
+    @Override public void nativeKeyPressed(NativeKeyEvent ev) {
+        if (ev.getKeyCode() == NativeKeyEvent.VC_SHIFT) isShiftDown = true;
+    }
+    @Override public void nativeKeyReleased(NativeKeyEvent ev) {
+        if (ev.getKeyCode() == NativeKeyEvent.VC_SHIFT) isShiftDown = false;
+    }
+
+    public int getServerFS() { return serverFS; }
 
     // цикл обработки ответов сервера на запросы/команды
     private void readLoop() {
@@ -181,21 +196,26 @@ public class NeStController implements Initializable {
                         long l;
                         switch (arg[1].toLowerCase()) {
                             case COM_GET_SPACE:
-                                try { l = Long.parseLong(arg[2]); }
-                                catch (Exception ex) { l = MAXSIZE; }
-                                final long free = l;
-                                Platform.runLater(() -> srvCtrl.updateFreeSpace(free));
+                                try { freeSpace = Long.parseLong(arg[2]); }
+                                catch (Exception ex) { freeSpace = MAXSIZE; }
+                                Platform.runLater(() -> {
+                                    PanelController srv = getRequestingPC();
+                                    if (srv == null) srv = srvCtrl;
+                                    srv.updateFreeSpace(freeSpace);
+                                });
                                 break;
                             case COM_GET_FILES:
                                 try { l = Long.parseLong(arg[2]); }
                                 catch (Exception ex) { ex.printStackTrace(); break; }
                                 if (arg[3].equals(".")) arg[3] = "";
+                                PanelController srvReq = getRequestingPC(),
+                                        srv = srvReq == null ? srvCtrl : srvReq;
                                 if (l == 0) {
-                                    srvCtrl.setServerFolder(null);
+                                    srv.setServerFolder(null);
                                     try {
                                         Semaphore semaphore = new Semaphore(0);
                                         Platform.runLater(() -> {
-                                            srvCtrl.updateServerFilesList(arg[3]);
+                                            srv.updateFilesList(arg[3]);
                                             semaphore.release();
                                         });
                                         semaphore.acquire();
@@ -222,7 +242,7 @@ public class NeStController implements Initializable {
                                         else
                                             correct = false;
                                     }
-                                    if (correct) srvCtrl.setServerFolder(fi);
+                                    if (correct) srv.setServerFolder(fi);
                                 } else
                                     correct = false;
                                 if (correct) {
@@ -233,7 +253,7 @@ public class NeStController implements Initializable {
                                     try {
                                         Semaphore semaphore = new Semaphore(0);
                                         Platform.runLater(() -> {
-                                            srvCtrl.updateServerFilesList(arg[3]);
+                                            srv.updateFilesList(arg[3]);
                                             semaphore.release();
                                         });
                                         semaphore.acquire();
@@ -261,7 +281,15 @@ public class NeStController implements Initializable {
                                 downloadData(Integer.parseInt(arg[2]), Base64.getDecoder().decode(arg[3]));
                                 break;
                             case COM_REMOVE: onRemoved(); break;
-                            case COM_RENAME: onRenamed();
+                            case COM_RENAME: onRenamed(); break;
+                            case COM_COPY: case COM_MOVE:
+                                PanelController dst = getDstPC();
+                                dst.getFilesTable().getSelectionModel()
+                                        .select(dst.getIndexOf(decodeSpaces(arg[3])));
+                                    //serverFS == FS_EXTFS
+                                        //: dst.getIndexOfAnyMatch(getSrcPC().getSelectedFilename()));
+                                break;
+                            case COM_FS: serverFS = Integer.parseInt(arg[2]);
                         }
                     }
                     // обработать ошибки при выполнении команд/запросов
@@ -318,8 +346,12 @@ public class NeStController implements Initializable {
                 // запрос размера свободного места в папке пользователя
                 if (message instanceof SpaceResponse) {
                     SpaceResponse rs = (SpaceResponse)message;
-                    System.out.println("free space, server return "+rs.getSpace());
-                    Platform.runLater(() -> srvCtrl.updateFreeSpace(rs.getSpace()));
+                    System.out.println("free space, server return "+(freeSpace = rs.getSpace()));
+                    Platform.runLater(() -> {
+                        PanelController srv = getRequestingPC();
+                        if (srv == null) srv = srvCtrl;
+                        srv.updateFreeSpace(freeSpace);
+                    });
                 }
                 // запрос списка файлов в указанной папке
                 // TODO: ответы именно на запросы списков элементов почему-то не появляются среди полученных,
@@ -332,8 +364,10 @@ public class NeStController implements Initializable {
                             "\npath=" + rs.getFolder() +
                             "\nlist=" + rs.getEntries());
                     if (rs.getErrCode() < 0) {
-                        srvCtrl.setServerFolder(rs.getEntriesCount() == 0 ? null : rs.getEntries());
-                        srvCtrl.updateServerFilesList(srvCtrl.getCurPath());
+                        PanelController srv = getRequestingPC();
+                        if (srv == null) srv = srvCtrl;
+                        srv.setServerFolder(rs.getEntriesCount() == 0 ? null : rs.getEntries());
+                        srv.updateFilesList();
                     } else
                         Messages.displayError(ErrorCode.values()[rs.getErrCode()], "");
                 }
@@ -368,6 +402,18 @@ public class NeStController implements Initializable {
                         onRenamed();
                     else
                         onFailed(COM_REMOVE, ErrorCode.values()[rs.getErrCode()]);
+                }
+                // извещение от сервера о типе его ФС
+                if (message instanceof FSTypeNotice)
+                    serverFS = ((FSTypeNotice)message).getFSType();
+                // запрос копирования/перемещения
+                if (message instanceof CopyResponse) {
+                    CopyResponse rs = (CopyResponse)message;
+                    if (rs.getErrCode() < 0) {
+                        PanelController dst = getDstPC();
+                        dst.getFilesTable().getSelectionModel().select(dst.getIndexOf(rs.getName()));
+                    } else
+                        onFailed(rs.moved() ? COM_MOVE : COM_COPY, ErrorCode.values()[rs.getErrCode()]);
                 }
             }
         } catch (Exception ex) { System.err.println("Connection lost"); ex.printStackTrace(); }
@@ -410,14 +456,6 @@ public class NeStController implements Initializable {
                     login, encode(password, true), username, email));
     }
 
-    // запрос на завершение сеанса пользователя
-    @FXML void logOut(/*ActionEvent actionEvent*/) {
-        if (useNetty) {
-            sendToServer(new LogoutRequest());
-        } else
-            sendToServer(getExitCommand().get(0));
-    }
-
     // запрос списка файлов в пользовательской папке (или в ее подпапке)
     void requestFiles(String folder) {
         if (useNetty)
@@ -435,48 +473,79 @@ public class NeStController implements Initializable {
     }
 
     // запрос на переименование файла/папки
-    void renameEntry(String newName, boolean replace) {
+    void renameEntry(String newName) {
         if (this.newName == null) this.newName = newName;
         if (useNetty)
-            sendToServer(new RenameRequest(srvCtrl.getFullSelectedFilename(), newName, replace));
+            sendToServer(new RenameRequest(getSrcPC().getFullSelectedFilename(), newName));
         else
             sendToServer(getCommand(COM_RENAME,
-                    encodeSpaces(srvCtrl.getFullSelectedFilename()),
-                    encodeSpaces(newName),
-                    replace ? "1" : ""));
+                    encodeSpaces(getSrcPC().getFullSelectedFilename()),
+                    encodeSpaces(newName)));
     }
 
-    // копирование файла/папки на сервер
+    // общий алгоритм копирования/перемещения файла/папки
     // с предварительной проверкой наличия (и выводом запроса на замену)
     // одноименного элемента в папке назначения
-    @FXML void tryUpload() { startTransfer(true); }
-
-    // отправка запроса
-    // /upload source_name destination_path size date [1=replace_existing]
-    private void upload(boolean replace) {
-        //TODO: при копировании больших файлов следовало бы отображать индикатор копирования
-        String dst = encodeSpaces(Paths.get(srvCtrl.getCurPath()).toString());
-        if (dst.length() == 0) dst = useNetty ? "" : ".";
-        FileInfo fi = cliCtrl.getFilesTable().getSelectionModel().getSelectedItem();
-        if (useNetty)
-            sendToServer(new UploadRequest(cliCtrl.getSelectedFilename(),
-                    dst, fi.getSize(), fi.getModifiedAsLong(), replace));
+    // источник определяется по выбранной (сфокусированной) панели
+    void makeCopy(boolean move) {
+        PanelController srcPC = getSrcPC(), dstPC = getDstPC();
+        int i = dstPC.getIndexOf(srcPC.getSelectedFilename());
+        String opName = bothLocal()
+                ? move ? COM_MOVE : COM_COPY
+                : srcPC.atServerMode() ? COM_DOWNLOAD : COM_UPLOAD;
+        if (i < 0 && ((dstPC.atServerMode() ? serverFS : dstPC.getClientFS()) == FS_NTFS))
+            i = dstPC.getIndexOfAnyMatch(srcPC.getSelectedFilename());
+        if (i >= 0)
+            if (srcPC.isFileSelected() && dstPC.isFile(i))
+                Platform.runLater(() -> {
+                    if (Messages.confirmReplacement(srcPC.getSelectedFilename()))
+                        try {
+                            if (srcPC.atServerMode() && !dstPC.atServerMode())
+                                removeFile(Paths.get(dstPC.getCurPath(), srcPC.getSelectedFilename()));
+                            doTransfer(srcPC, dstPC, move);
+                        } catch (IOException ex) {
+                            Messages.displayError(ERR_CANNOT_COMPLETE, ERR_OPERATION_FAILED, opName);
+                        }
+                });
+            else
+                Messages.displayWrongReplacement(opName,
+                        dstPC.isFile(dstPC.getIndexOfAnyMatch(srcPC.getSelectedFilename())));
         else
-            sendToServer(getCommand(COM_UPLOAD,
-                    encodeSpaces(cliCtrl.getSelectedFilename()),
-                    dst, fi.getSize()+"", fi.getModifiedAsLong()+"", replace ? "1" : ""));
+            try { doTransfer(srcPC, dstPC, move); }
+            catch (IOException ex) {
+                Messages.displayError(ERR_CANNOT_COMPLETE, ERR_OPERATION_FAILED, opName);
+            }
     }
 
-    // продолжать передачу файла на сервер
+    // отправка запроса копирования с клиента на сервер
+    // /upload source_name destination_path size date
+    private void upload() {
+        //TODO: при копировании больших файлов следовало бы отображать индикатор копирования
+        PanelController cli = getSrcPC(), srv = getDstPC();
+        String dst = Paths.get(srv.getCurPath()).toString();
+        if (dst.length() == 0 && !useNetty) dst = ".";
+        FileInfo fi = cli.getFilesTable().getSelectionModel().getSelectedItem();
+        srv.createRequest();
+        if (useNetty)
+            sendToServer(new UploadRequest(cli.getSelectedFilename(),
+                    dst, fi.getSize(), fi.getModifiedAsLong()));
+        else
+            sendToServer(getCommand(COM_UPLOAD,
+                    encodeSpaces(cli.getSelectedFilename()),
+                    encodeSpaces(dst), fi.getSize()+"", fi.getModifiedAsLong()+""));
+    }
+
+    // продолжать передачу файла с клиента на сервер
     void uploadData(int id) {
         if (id == SRV_SUCCESS)
             onUploaded();
         else {
+            PanelController cli = getSrcPC();
             byte[] buf = new byte[BUF_SIZE];
             try (BufferedInputStream bis = new BufferedInputStream(
                     Files.newInputStream(
-                            Paths.get(Paths.get(cliCtrl.getCurPath(),
-                                    cliCtrl.getSelectedFilename()).toString())), BUF_SIZE)) {
+                            Paths.get(Paths.get(cli.getCurPath(),
+                                    cli.getSelectedFilename()).toString())), BUF_SIZE)) {
                 int bytesRead;
                 while ((bytesRead = bis.read(buf)) > 0)
                     if (useNetty)
@@ -492,89 +561,61 @@ public class NeStController implements Initializable {
         }
     }
 
-    // создать папку/пустой файл или начать передачу
-    void doTransfer(Path dst, long size, boolean toServer, boolean replace) throws IOException {
-        if (toServer)
-            upload(replace);
-        else {
-            if (Files.exists(dst) && !replace)
-                throw new FileAlreadyExistsException(dst.toString());
-            else {
-                if (similarNames(dst, srvCtrl.getSelectedFilename())) removeFile(dst);
-                makeFolderOrZero(dst, size);
-            }
-            if (size > 0L) download(); else onDownloaded();
-        }
-    }
-
-    // общий алгоритм копирования файла/папки на/с сервера
-    void startTransfer(boolean toServer) {
-        PanelController srcPC = toServer ? cliCtrl : srvCtrl, dstPC = toServer ? srvCtrl : cliCtrl;
+    // копировать/переместить файл/папку и обновить панели по завершению
+    void doTransfer(PanelController srcPC, PanelController dstPC, boolean move) throws IOException {
         Path dst = Paths.get(dstPC.getCurPath(), srcPC.getSelectedFilename());
-        int idx = -1;
         long size = srcPC.getSelectedFileSize();
-        int entryType = dstPC.getFilesTable().getItems() == null
-                ? -1
-                : dstPC.checkPresence(srcPC.getSelectedFilename());
-        if (entryType < 0) {
-            try {
-                doTransfer(dst, size, toServer, false);
-            // обработка исключений только при копировании с сервера
-            } catch (FileAlreadyExistsException ex) {
-                idx = cliCtrl.getIndexOfAnyMatch(srvCtrl.getSelectedFilename());
-                entryType = cliCtrl.getFilesTable().getItems().get(idx).getSize() < 0 ? 1 : 0;
-            } catch (IOException ex) {
-                Messages.displayError(ERR_CANNOT_COMPLETE, ERR_OPERATION_FAILED, COM_DOWNLOAD);
-                return;
+        if (dstPC.atServerMode()) {
+            if (srcPC.atServerMode()) {
+                dstPC.createRequest();
+                if (move) srcPC.createRequest();
+                copyItem(srcPC.getFullSelectedFilename(), dstPC.getCurPath(), move);
+            } else
+                upload();
+        } else {
+            boolean redraw = false;
+            if (size <= 0L) {
+                makeFolderOrZero(dst, size, srcPC.getSelectedFileTime());
+                if (size == 0L && move)
+                    removeFile(Paths.get(srcPC.getFullSelectedFilename()));
+                redraw = true;
+            } else
+                if (srcPC.atServerMode())
+                    download();
+                else {
+                    copy(Paths.get(srcPC.getFullSelectedFilename()), dst, dstPC.getClientFS(), move);
+                    redraw = true;
+                }
+            if (redraw) {
+                if (move) srcPC.updateFilesList();
+                getDstPC().updateFilesList();
+                getDstPC().getFilesTable().getSelectionModel().
+                        select(getDstPC().getIndexOf(srcPC.getSelectedFilename()));
             }
         }
-        // перед копированием на сервер задать вопрос замены, если файл/папка существует в списке
-        if (entryType == 0) // в случае существования файла...
-            if (size < 0L) { // ...он не может быть заменен папкой
-                Messages.displayError(ERR_WRONG_REPLACEMENT, ERR_OPERATION_FAILED);
-                return;
-            } else {// ...заменяет существующий
-                String name = idx < 0
-                        ? srcPC.getSelectedFilename()
-                        : cliCtrl.getFilesTable().getItems().get(idx).getFilename();
-                Platform.runLater(() -> {
-                    if (Messages.confirmReplacement(true, name))
-                        try { doTransfer(dst, size, toServer, true); }
-                        // обработка исключений только при копировании с сервера
-                        catch (IOException ex) {
-                            Messages.displayError(ERR_CANNOT_COMPLETE, ERR_OPERATION_FAILED, COM_DOWNLOAD);
-                        }
-                });
-            }
-        // в случае существования папки ее не заменить ни папкой, ни файлом - копирование внутрь
-        if (entryType == 1)
-            Messages.displayError(ERR_CANNOT_COMPLETE,
-                    ERR_OPERATION_FAILED,
-                    "folder " + dst + " already exist",
-                    toServer ? COM_UPLOAD : COM_DOWNLOAD);
     }
 
-    @FXML void tryDownload() { startTransfer(false); }
-
-    // отправка запроса
+    // отправка запроса копирования с сервера на клиент
     // /download source_path
     private void download() {
         //TODO: при копировании больших файлов следовало бы отображать индикатор копирования
+        getDstPC().createRequest();
         if (useNetty)
-            sendToServer(new DownloadRequest(srvCtrl.getFullSelectedFilename()));
+            sendToServer(new DownloadRequest(getSrcPC().getFullSelectedFilename()));
         else
-            sendToServer(getCommand(COM_DOWNLOAD, encodeSpaces(srvCtrl.getSelectedFilename())));
+            sendToServer(getCommand(COM_DOWNLOAD, encodeSpaces(getSrcPC().getSelectedFilename())));
     }
 
     // продолжать передачу файла с сервера
     void downloadData(int size, byte[] data) {
         boolean success = true;
         if (size > 0) {
-            if (restSize == 0L) restSize = srvCtrl.getSelectedFileSize();
+            PanelController srv = getSrcPC();
+            if (restSize == 0L) restSize = srv.getSelectedFileSize();
             byte[] buf = Arrays.copyOf(data, size);
             try (BufferedOutputStream bos = new BufferedOutputStream(
-                    new FileOutputStream(Paths.get(cliCtrl.getCurPath(),
-                            srvCtrl.getSelectedFilename()).toString(), true), BUF_SIZE)) {
+                    new FileOutputStream(Paths.get(getDstPC().getCurPath(),
+                            srv.getSelectedFilename()).toString(), true), BUF_SIZE)) {
                 bos.write(buf, 0, size);
             } catch (Exception ex) {
                 ex.printStackTrace();
@@ -590,139 +631,41 @@ public class NeStController implements Initializable {
             onFailed(COM_DOWNLOAD, ERR_CANNOT_COMPLETE);
     }
 
+    // отправка запроса копирования/перемещения внутри папки на сервере
+    // /copy source_name destination_path [1=move]
+    private void copyItem(String src, String dst, boolean move) {
+        //TODO: при копировании больших файлов следовало бы отображать индикатор копирования
+        if (useNetty)
+            sendToServer(new CopyRequest(src, dst, move));
+        else
+            sendToServer(getCommand(COM_COPY, encodeSpaces(src),
+                    dst.length() == 0 ? "." : encodeSpaces(dst), (move ? "1" : "")+""));
+    }
+
     /*
        реализация копирования drag-and-drop-перетаскиванием
     */
-    void dragStarted(boolean client, MouseEvent ev) {
-        dragSrc = client ? 0 : 1;
-        Dragboard db = (client ? cliCtrl : srvCtrl).getFilesTable().startDragAndDrop(TransferMode.ANY);
+    void dragStarted(MouseEvent ev) {
+        dragSrc = getSrcPC().equals(cliCtrl) ? 0 : 1;
+        Dragboard db = getSrcPC().getFilesTable().startDragAndDrop(TransferMode.ANY);
         ClipboardContent c = new ClipboardContent();
-        c.putString((client ? cliCtrl : srvCtrl).getSelectedFilename());
+        c.putString(getSrcPC().getSelectedFilename());
         db.setContent(c);
         ev.consume();
     }
 
     void dragOver(boolean client, DragEvent ev) {
-        // команда subst позволяет для одного диска задать неколько букв (псевдонимов),
-        // поэтому папки с одинаковыми именами на разных дисках физически могут быть
-        // как разными, так и одинаковыми. такие случаи (разные имена для одного диска),
-        // скорее всего, на практике редки, и следует полагать, что в большинстве случаев
-        // на физически разных дисках могут находиться папки с полностью совпадающими путями
-        if (ev.getDragboard().hasString() && (dragSrc == (client ? 1 : 0)) && (srvCtrl.isServerMode() ||
-                (!cliCtrl.getCurPath().equals(srvCtrl.getCurPath()) ||
-                        cliCtrl.getCurDisk() != srvCtrl.getCurDisk())))
+        if (ev.getDragboard().hasString() && (dragSrc == (client ? 1 : 0)) &&
+                (!bothLocal() || !sameContent()))
             ev.acceptTransferModes(TransferMode.ANY);
         ev.consume();
     }
 
-    void dragDropped(boolean client, DragEvent ev) {
+    void dragDropped(DragEvent ev) {
         Dragboard db = ev.getDragboard();
-        if (srvCtrl.isServerMode())
-            if (client) tryDownload(); else tryUpload();
-        else {
-            boolean retry = false;
-            Path dst = Paths.get((client ? cliCtrl : srvCtrl).getCurPath(), db.getString());
-            do {
-                try {
-                    Files.copy(Paths.get((client ? srvCtrl : cliCtrl).getCurPath(), db.getString()), dst);
-                } catch (Exception ex) {
-                    retry = ex instanceof FileAlreadyExistsException
-                            ? Messages.confirmReplacement(Files.isRegularFile(dst), db.getString())
-                            : Messages.confirmRetryCopying();
-                }
-            } while (retry);
-            if (!client) srvCtrl.updateFilesList(Paths.get(srvCtrl.getCurPath()));
-        }
-        if (client) cliCtrl.updateFilesList(Paths.get(cliCtrl.getCurPath()));
+        makeCopy(isShiftDown);
         ev.setDropCompleted(db.hasString());
         ev.consume();
-    }
-
-    /**
-     *    удаление выбранного файла (папки) может происходить как по нажатию Delete,
-     *    так и по команде меню Remove selected.
-     *    решение о способе удаления принимается в зависимости от нахождения
-     *    файла (папки) - на клиенте или на сервере:
-     *    на клиенте - вызвать панельный метод физического удаления
-     *       и, при необходимости, обновить содержимое второй клиентской панели;
-     *    на сервере - отправить запрос серверному обработчику запросов клиента
-     */
-    @FXML void tryRemove(/*ActionEvent actionEvent*/) {
-        PanelController pc = cliCtrl.getFilesTable().isFocused() ? cliCtrl : srvCtrl;
-        pc.setSavedIdx(pc.getFilesTable().getSelectionModel().getSelectedIndex());
-        if (Messages.getRemovalConfirmation(pc.getSelectedFileSize() >= 0,
-                pc.getSelectedFilename(), true)) {
-            boolean same = cliCtrl.getCurPath().equals(srvCtrl.getCurPath());
-            if (cliCtrl.getFilesTable().isFocused()) {
-                cliCtrl.removeItem();
-                if (same) srvCtrl.updateFilesList(Paths.get(srvCtrl.getCurPath()));
-            }
-            if (srvCtrl.getFilesTable().isFocused()) {
-                if (srvCtrl.isServerMode())
-                    removeEntry(Paths.get(srvCtrl.getCurPath(), srvCtrl.getSelectedFilename()).toString());
-                else {
-                    srvCtrl.removeItem();
-                    if (same) cliCtrl.updateFilesList(Paths.get(cliCtrl.getCurPath()));
-                }
-            }
-            refreshFileOps();
-        }
-    }
-
-    // переименование файла/папки
-    @FXML void tryRename(/*ActionEvent actionEvent*/) {
-        PanelController pc = cliCtrl.getFilesTable().isFocused() ? cliCtrl : srvCtrl;
-        pc.setEditing(true);
-        newName = Messages.getInputValue(
-                    "Renaming '"+pc.getSelectedFilename()+"'",
-                    "Input new name for '"+pc.getSelectedFilename()+"'",
-                    "New name:", pc.getSelectedFilename());
-        pc.setEditing(false);
-        if (newName == null) return;
-        int replace = pc.renameItem(pc.getSelectedFilename(), newName, false);
-        if (replace != 0)
-            if (srvCtrl.getFilesTable().isFocused() && srvCtrl.isServerMode())
-                renameEntry(newName, replace == 1);
-            else if (cliCtrl.getCurPath().equals(srvCtrl.getCurPath())) {
-                cliCtrl.updateFilesList(Paths.get(pc.getCurPath()));
-                cliCtrl.getFilesTable().getSelectionModel().select(pc.getIndexOf(newName));
-                srvCtrl.updateFilesList(Paths.get(pc.getCurPath()));
-                srvCtrl.getFilesTable().getSelectionModel().select(pc.getIndexOf(newName));
-            } else {
-                pc.updateFilesList(Paths.get(pc.getCurPath()));
-                pc.getFilesTable().getSelectionModel().select(pc.getIndexOf(newName));
-            }
-    }
-
-    // обновить доступность субменю операций с файлами/папками
-    void refreshFileOps() {
-        menuItemUpload.setDisable(!clientFocused || !srvCtrl.isServerMode());
-        menuItemDownload.setDisable(!serverFocused || !srvCtrl.isServerMode());
-        ActionMenu.setDisable(!clientFocused && !serverFocused);
-        menuItemRemove.setDisable(!clientFocused && !serverFocused);
-        menuItemRename.setDisable(!clientFocused && !serverFocused);
-    }
-
-    // обновление второй панели при необходимости,
-    // вызывается контроллером панели при ее обновлении
-    void onPanelUpdated() {
-        if (cliCtrl.getCurPath().equals(srvCtrl.getCurPath())) {
-            int csi = cliCtrl.getFilesTable().getSelectionModel().getSelectedIndex(),
-                ssi = srvCtrl.getFilesTable().getSelectionModel().getSelectedIndex();
-            boolean cf = clientFocused, sf = serverFocused;
-            cliCtrl.updateFilesList(Paths.get(cliCtrl.getCurPath()));
-            srvCtrl.updateFilesList(Paths.get(srvCtrl.getCurPath()));
-            cliCtrl.getFilesTable().getSelectionModel().select(csi);
-            srvCtrl.getFilesTable().getSelectionModel().select(ssi);
-            if (cf) cliCtrl.getFilesTable().requestFocus();
-            if (sf) srvCtrl.getFilesTable().requestFocus();
-            refreshFileOps();
-        }
-    }
-
-    // действия при выходе
-    @FXML public void performExit(/*ActionEvent ev*/) {
-        Platform.exit();
     }
 
     /*
@@ -738,9 +681,9 @@ public class NeStController implements Initializable {
             regController.addMessage("Logged in as " + user);
             regController.updateButtons();
             srvCtrl.setServerMode();
-            menuItemLogIn.setDisable(true);
-            menuItemLogOut.setDisable(false);
-            menuItemViewRight.setText("Right list: server files");
+            refreshMenus(true);
+            refreshFileCmd();
+            refreshFileOps();
         });
     }
 
@@ -756,52 +699,66 @@ public class NeStController implements Initializable {
         Platform.runLater(() -> {
             user = "";
             setTitle();
+            if (cliCtrl.atServerMode())
+                cliCtrl.setLocalMode(srvCtrl.atServerMode() ? "." : srvCtrl.getCurPath());
             srvCtrl.setLocalMode(cliCtrl.getCurPath());
-            menuItemLogIn.setDisable(false);
-            menuItemLogOut.setDisable(true);
+            refreshMenus(false);
+            refreshFileCmd();
             refreshFileOps();
-            menuItemViewRight.setText("Right list: client files");
         });
+    }
+
+    void refreshMenus(boolean loggedIn) {
+        menuItemLogIn.setDisable(loggedIn);
+        menuItemLogOut.setDisable(!loggedIn);
+        menuItemViewLeft.setText("Left list: client");
+        menuItemViewRight.setText("Right list: "+(loggedIn ? "server" : "client"));
+        menuItemViewRight.setDisable(!loggedIn);
+        menuItemViewLeft.setDisable(!loggedIn);
     }
 
     // при успешном завершении операции с файлом/папкой фокус перемещается на него/нее,
     // в случае команды REMOVE - остается на месте: на следующем (если есть) за удаленным элементе
     void onUploaded() {
         Platform.runLater(() -> {
-            if (srvCtrl.isServerMode())
-                srvCtrl.updateServerFilesList(srvCtrl.getCurPath());
-            else
-                srvCtrl.updateFilesList();
-            srvCtrl.getFilesTable().getSelectionModel()
-                    .select(srvCtrl.getIndexOf(cliCtrl.getSelectedFilename()));
+            PanelController srv = getDstPC();
+            srv.updateFilesList();
+            srv.getFilesTable().getSelectionModel()
+                    .select(srv.getIndexOf(getSrcPC().getSelectedFilename()));
             refreshFileOps();
         });
     }
     void onDownloaded() {
+        PanelController cli = getDstPC(), srv = getSrcPC();
         // установить дату и время последней модификации скопированного элемента как у оригинала
-        new File(Paths.get(cliCtrl.getCurPath(),
-                srvCtrl.getSelectedFilename()).toString()).setLastModified(
-                srvCtrl.getFilesTable().getSelectionModel().getSelectedItem().getModifiedAsLong());
+        applyDateTime(Paths.get(cli.getCurPath(), srv.getSelectedFilename()).toString(),
+                srv.getSelectedFileTime());
         Platform.runLater(() -> {
-            cliCtrl.updateFilesList();
+            cli.updateFilesList();
             //int i = cliCtrl.getIndexOf(srvCtrl.getSelectedFilename());
             // следует учитывать, что индекс вообще находится во всем множестве элементов таблицы,
             // без учета текущего способа их упорядочения, однако выбор с помощью select
             // по этому индексу выбирает именно искомый элемент с учетом сортировки
-            cliCtrl.getFilesTable().getSelectionModel()
-                    .select(cliCtrl.getIndexOf(srvCtrl.getSelectedFilename()));
+            cli.getFilesTable().getSelectionModel()
+                    .select(cli.getIndexOf(srv.getSelectedFilename()));
             // не срабатывает так, как ожидается
             //cliCtrl.getFilesTable().scrollTo(i);
             refreshFileOps();
         });
     }
     void onRemoved() {
-        if (srvCtrl.getFilesTable().getItems() != null)
-            srvCtrl.getFilesTable().getSelectionModel().select(srvCtrl.getSavedIdx());
+        PanelController srv = getSrcPC();
+        if (srv.getFilesTable().getItems() != null) {
+            if (sameContent()) {
+                PanelController other = getDstPC();
+                other.setServerFolder(srv.getServerFolder());
+                other.updateFilesList();
+            }
+        }
+        refreshFileOps();
     }
     void onRenamed() {
-        int i = srvCtrl.getIndexOf(newName);
-        srvCtrl.getFilesTable().getSelectionModel().select(i);
+        onRemoved();
         newName = null;
     }
 
@@ -809,62 +766,77 @@ public class NeStController implements Initializable {
        обработать ошибки копирования, удаления и переименования
     */
     void onFailed(String cmd, ErrorCode errCode) {
-        switch (cmd) {
-            case COM_RENAME:
-                switch (errCode) {
-                    case ERR_NO_SUCH_FILE:
-                        PanelController pc = cliCtrl.getFilesTable().isFocused() ? cliCtrl : srvCtrl;
-                        int n = pc.getIndexOfAnyMatch(newName);
-                        if (n < pc.getFilesTable().getItems().size())
-                            n = pc.getFilesTable().getItems().get(n).getSize() < 0L ? 1 : 0;
-                        if (pc.isRenameable(newName, n))
-                            renameEntry(newName, true);
-                        else
-                            newName = null;
-                        break;
-                    case ERR_CANNOT_COMPLETE:
-                        Messages.displayError(errCode, ERR_OPERATION_FAILED, COM_RENAME);
-                }
+        if (cmd.equals(COM_DOWNLOAD)) {
+            PanelController srv = getSrcPC();
+            if (Messages.getRemovalConfirmation(true, srv.getSelectedFilename(), false))
+                removeFile(Paths.get(srv.getFullSelectedFilename()));
+        } else switch (errCode) {
+            case ERR_OUT_OF_SPACE:
+                Messages.displayError(ERR_CANNOT_COMPLETE,
+                        ERR_OPERATION_FAILED, errMessage[ERR_OUT_OF_SPACE.ordinal()], cmd);
                 break;
-            case COM_REMOVE:
-                Messages.displayError(errCode, ERR_OPERATION_FAILED, COM_REMOVE);
+            case ERR_INTERNAL_ERROR:
+                Messages.displayError(errCode, ERR_OPERATION_FAILED);
                 break;
-            case COM_DOWNLOAD:
-                if (Messages.getRemovalConfirmation(true, srvCtrl.getSelectedFilename(), false))
-                    removeFile(Paths.get(srvCtrl.getFullSelectedFilename()));
-                break;
-            case COM_UPLOAD:
-                switch (errCode) {
-                    case ERR_NO_SUCH_FILE:
-                        int idx = srvCtrl.getIndexOfAnyMatch(cliCtrl.getSelectedFilename());
-                        String name = srvCtrl.getFilesTable().getItems().get(idx).getFilename();
-
-                        if (srvCtrl.getFilesTable().getItems().get(idx).getSize() < 0L)
-                            // в случае существования папки ее не заменить ни папкой, ни файлом -
-                            // копирование внутрь
-                            Messages.displayError(ERR_CANNOT_COMPLETE, ERR_OPERATION_FAILED,
-                                    "folder " + name + " already exist", COM_UPLOAD);
-                        else
-                            // в случае существования файла...
-                            if (cliCtrl.getSelectedFileSize() < 0L)
-                                // ...он не может быть заменен папкой
-                                Messages.displayError(ERR_WRONG_REPLACEMENT, ERR_OPERATION_FAILED);
-                            else
-                                // ...нужно подтверждение на его замену
-                                Platform.runLater(() -> {
-                                    if (Messages.confirmReplacement(true, name))
-                                        upload(true);
-                                });
-                        break;
-                    case ERR_CANNOT_COMPLETE:
-                        Messages.displayError(errCode, ERR_OPERATION_FAILED, COM_UPLOAD);
-                }
+            case ERR_CANNOT_COMPLETE:
+                Messages.displayError(errCode, ERR_OPERATION_FAILED, cmd);
         }
     }
 
     /*
        прочие вспомогательные методы
     */
+    // нахождение обеих панелей в локальном (клиент/клиент или сервер/сервер) режиме
+    private boolean bothLocal() {
+        return ((cliCtrl.atServerMode() && srvCtrl.atServerMode()) ||
+                (!cliCtrl.atServerMode() && !srvCtrl.atServerMode()));
+    }
+
+    // проверить, отображают ли (ссылаются ли на) одно и то же обе панели
+    private boolean sameContent() { return cliCtrl.getCurPath().equals(srvCtrl.getCurPath()); }
+
+    // обновить доступность субменю операций с файлами/папками
+    void refreshFileOps() {
+        boolean noneSelected = !clientFocused && !serverFocused;
+        ActionMenu.setDisable(noneSelected);
+        menuItemRemove.setDisable(noneSelected);
+        menuItemRename.setDisable(noneSelected);
+        if (bothLocal()) {
+            boolean equalPaths = sameContent();
+            menuItemUpload.setDisable(noneSelected || equalPaths);
+            menuItemDownload.setDisable(noneSelected || equalPaths);
+        } else {
+            menuItemUpload.setDisable(noneSelected || (clientFocused && cliCtrl.atServerMode()) ||
+                    (serverFocused && srvCtrl.atServerMode()));
+            menuItemDownload.setDisable(noneSelected || (clientFocused && !cliCtrl.atServerMode()) ||
+                    (serverFocused && !srvCtrl.atServerMode()));
+        }
+    }
+
+    // обновить названия операций с файлами/папками
+    void refreshFileCmd() {
+        boolean both = bothLocal();
+        menuItemUpload.setText(capitalize(both ? COM_COPY : COM_UPLOAD));
+        menuItemDownload.setText(capitalize(both ? COM_MOVE : COM_DOWNLOAD));
+    }
+
+    // обновление второй панели при необходимости,
+    // вызывается контроллером панели при ее обновлении
+    void onPanelUpdated() {
+        if (sameContent()) {
+            int csi = cliCtrl.getFilesTable().getSelectionModel().getSelectedIndex(),
+                    ssi = srvCtrl.getFilesTable().getSelectionModel().getSelectedIndex();
+            boolean cf = clientFocused, sf = serverFocused;
+            cliCtrl.updateFilesList();
+            srvCtrl.updateFilesList();
+            cliCtrl.getFilesTable().getSelectionModel().select(csi);
+            srvCtrl.getFilesTable().getSelectionModel().select(ssi);
+            if (cf) cliCtrl.getFilesTable().requestFocus();
+            if (sf) srvCtrl.getFilesTable().requestFocus();
+            refreshFileOps();
+        }
+    }
+
     // обновить заголовок окна
     private void setTitle() {
         Platform.runLater(() -> {
@@ -890,14 +862,141 @@ public class NeStController implements Initializable {
         catch (IOException ex) { ex.printStackTrace(); }
     }
 
+    // панель с фокусом является источником при операциях копирования/перемещения
+    private PanelController getSrcPC() { return cliCtrl.getFilesTable().isFocused() ? cliCtrl : srvCtrl; }
+    private PanelController getDstPC() { return cliCtrl.getFilesTable().isFocused() ? srvCtrl : cliCtrl; }
+
+    // определить панель с запросом
+    private PanelController getRequestingPC() {
+        if (cliCtrl.atServerMode() && cliCtrl.hasRequest()) return cliCtrl;
+        if (srvCtrl.atServerMode() && srvCtrl.hasRequest()) return srvCtrl;
+        return null;
+    }
+
+    /*
+      обработчики пунктов меню File
+    */
     // отобразить окно авторизации/регистрации
-    @FXML public void showRegForm(/*ActionEvent actionEvent*/) {
+    @FXML public void showRegForm() {
         if (regStage == null) createRegStage();
         regStage.show();
     }
 
+    // завершение сеанса пользователя
+    @FXML void logOut() {
+        if (useNetty) {
+            sendToServer(new LogoutRequest());
+        } else
+            sendToServer(getExitCommand().get(0));
+    }
+
+    // копирование файла/папки - локальное или с клиента на сервер
+    @FXML void copyOrUpload() { makeCopy(false); }
+    // перемещение файла/папки - локальное или с сервера на клиент
+    @FXML void moveOrDownload() { makeCopy(true); }
+
+    /**
+     *    удаление выбранного файла (папки) может происходить как по нажатию Delete,
+     *    так и по команде меню Remove.
+     *    решение о способе удаления принимается в зависимости от нахождения файла/папки:
+     *    на клиенте - выполнить физическое удаление и, при необходимости,
+     *       обновить содержимое второй клиентской панели;
+     *    на сервере - отправить запрос серверу
+     */
+    @FXML void tryRemove() {
+        PanelController pc = getSrcPC();
+        if (Messages.getRemovalConfirmation(pc.getSelectedFileSize() >= 0,
+                pc.getSelectedFilename(), true)) {
+            if (pc.atServerMode()) {
+                pc.createRequest();
+                removeEntry(pc.getFullSelectedFilename());
+            } else
+                try {
+                    Files.delete(Paths.get(pc.getFullSelectedFilename()));
+                    pc.updateFilesList();
+                    if (sameContent())
+                        (cliCtrl.getFilesTable().isFocused() ? srvCtrl : cliCtrl).updateFilesList();
+                } catch (IOException ex) {
+                    ErrorCode errCode = ERR_NO_SUCH_FILE;
+                    if (ex instanceof DirectoryNotEmptyException) errCode = ERR_NOT_EMPTY;
+                    Messages.displayError(errCode, ERR_OPERATION_FAILED, COM_REMOVE);
+                }
+            refreshFileOps();
+        }
+    }
+
+    // переименование файла/папки
+    @FXML void tryRename() {
+        PanelController pc = getSrcPC();
+        pc.setEditing(true);
+        newName = Messages.getInputValue(
+                    "Renaming '"+pc.getSelectedFilename()+"'",
+                    "Input new name for '"+pc.getSelectedFilename()+"'",
+                    "New name:", pc.getSelectedFilename());
+        pc.setEditing(false);
+        if (newName == null) return;
+        if (pc.renameItem(pc.getSelectedFilename(), newName, false))
+            if (pc.atServerMode()) {
+                pc.createRequest();
+                renameEntry(newName);
+            } else
+                if (sameContent())
+                    (cliCtrl.getFilesTable().isFocused() ? srvCtrl : cliCtrl).updateFilesList();
+    }
+
+    // действия при выходе
+    @FXML public void performExit() {
+        logOut();
+        // с использованием библиотеки JNativeHook
+        // вызов Platform.exit не завершает работу приложения
+        System.exit(0); //Platform.exit();
+    }
+
+    /*
+      обработчики пунктов меню View
+    */
+    @FXML void toggleViewLeft() {
+        menuItemViewLeft.setText("Left list: "+
+            (menuItemViewLeft.getText().endsWith("client") ? "server" : "client"));
+        if (menuItemViewLeft.getText().endsWith("server")) {
+            cliCtrl.setServerMode(srvCtrl.atServerMode() ? srvCtrl.getCurPath() : "");
+            if (cliCtrl.getServerFolder() == null)
+                cliCtrl.setServerFolder(srvCtrl.getServerFolder());
+            cliCtrl.updateFilesList();
+            cliCtrl.updateFreeSpace(freeSpace);
+        } else
+            cliCtrl.setLocalMode(srvCtrl.atServerMode() ? "." : srvCtrl.getCurPath());
+        refreshFileCmd();
+        refreshFileOps();
+        menuItemViewLeft.setSelected(false);
+    }
+
+    @FXML void toggleViewRight() {
+        menuItemViewRight.setText("Right list: "+
+            (menuItemViewRight.getText().endsWith("client") ? "server" : "client"));
+        if (menuItemViewRight.getText().endsWith("server")) {
+            srvCtrl.setServerMode(cliCtrl.atServerMode() ? cliCtrl.getCurPath() : "");
+            srvCtrl.updateFilesList();
+            srvCtrl.updateFreeSpace(freeSpace);
+        } else
+            srvCtrl.setLocalMode(cliCtrl.atServerMode() ? "." : cliCtrl.getCurPath());
+        refreshFileCmd();
+        refreshFileOps();
+        menuItemViewRight.setSelected(false);
+    }
+
+    /*
+       инициализация приложения
+    */
     @Override public void initialize(URL url, ResourceBundle resourceBundle) {
-        Platform.runLater(() -> stage = (Stage)clientView.getScene().getWindow());
+        Platform.runLater(() -> {
+            stage = (Stage)clientView.getScene().getWindow();
+            stage.setOnCloseRequest(ev -> performExit());
+        });
+
+        try { GlobalScreen.registerNativeHook(); }
+        catch (NativeHookException e) { throw new RuntimeException(e); }
+        GlobalScreen.addNativeKeyListener(this);
 
         cliCtrl = (PanelController)clientView.getProperties().get("ctrlRef");
         srvCtrl = (PanelController)serverView.getProperties().get("ctrlRef");
@@ -930,12 +1029,12 @@ public class NeStController implements Initializable {
 
         // изнутри панелей невозможно определить направление перетаскивания -
         // его обработчики пишутся и назначаются извне
-        cliCtrl.getFilesTable().setOnDragDetected(ev -> dragStarted(true, ev));
-        srvCtrl.getFilesTable().setOnDragDetected(ev -> dragStarted(false, ev));
+        cliCtrl.getFilesTable().setOnDragDetected(this::dragStarted);
+        srvCtrl.getFilesTable().setOnDragDetected(this::dragStarted);
         cliCtrl.getFilesTable().setOnDragOver(ev -> dragOver(true, ev));
         srvCtrl.getFilesTable().setOnDragOver(ev -> dragOver(false, ev));
-        cliCtrl.getFilesTable().setOnDragDropped(ev -> dragDropped(true, ev));
-        srvCtrl.getFilesTable().setOnDragDropped(ev -> dragDropped(false, ev));
+        cliCtrl.getFilesTable().setOnDragDropped(this::dragDropped);
+        srvCtrl.getFilesTable().setOnDragDropped(this::dragDropped);
 
         try {
             Thread readThread;
