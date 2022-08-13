@@ -32,6 +32,9 @@ public class RegController implements Initializable {
     }
 
     boolean incompleteUserData() {
+        for (int i = 0; i < passwordField.getText().length(); i++)
+            if (passwordField.getText().charAt(i) > 127 ||
+                passwordField.getText().charAt(i) < 32) return false;
         return loginField.getText().trim().length() == 0 ||
                passwordField.getText().trim().length() < MIN_PWD_LEN ||
                passwordField.getText().trim().length() > MAX_PWD_LEN;
@@ -44,7 +47,7 @@ public class RegController implements Initializable {
     }
 
     @FXML void authorize(/*ActionEvent actionEvent*/) {
-        if (!controller.isAuthorized()) {
+        if (!controller.authorized()) {
             String login = loginField.getText().trim();
             String password = passwordField.getText().trim();
             Platform.runLater(() -> {
@@ -59,7 +62,7 @@ public class RegController implements Initializable {
     }
 
     @FXML public void register(/*ActionEvent actionEvent*/) {
-        if (!controller.isAuthorized()) {
+        if (!controller.authorized()) {
             String login = loginField.getText().trim(),
                    password = passwordField.getText().trim(),
                    email = emailField.getText().trim(),
@@ -123,8 +126,8 @@ public class RegController implements Initializable {
     void addMessage(String msg) { textArea.appendText(msg); }
 
     void updateButtons() {
-        btnAuth.setDisable(controller.isAuthorized() || incompleteUserData());
-        btnReg.setDisable(controller.isAuthorized() || incompleteRegData());
+        btnAuth.setDisable(controller.authorized() || incompleteUserData());
+        btnReg.setDisable(controller.authorized() || incompleteRegData());
     }
 
     void createAdditionalControls() {
@@ -162,8 +165,8 @@ public class RegController implements Initializable {
             });
             createAdditionalControls();
             ChangeListener<String> changeListener = (observable, oldValue, newValue) -> {
-                btnAuth.setDisable(controller.isAuthorized() || incompleteUserData());
-                btnReg.setDisable(controller.isAuthorized() || incompleteRegData());
+                btnAuth.setDisable(controller.authorized() || incompleteUserData());
+                btnReg.setDisable(controller.authorized() || incompleteRegData());
             };
             loginField.textProperty().addListener(changeListener);
             passwordField.textProperty().addListener(changeListener);
