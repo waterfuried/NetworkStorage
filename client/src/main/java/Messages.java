@@ -1,6 +1,5 @@
 import static prefs.Prefs.*;
-import static prefs.Prefs.ErrorCode.ERR_CANNOT_COMPLETE;
-import static prefs.Prefs.ErrorCode.ERR_WRONG_REPLACEMENT;
+import static prefs.Prefs.ErrorCode.*;
 
 import javafx.scene.control.*;
 
