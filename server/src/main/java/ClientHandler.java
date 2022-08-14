@@ -372,7 +372,7 @@ public class ClientHandler {
                     String entry = i < 0 ? arg[1]: arg[1].substring(i+1);
                     copy(userFolder.resolve(arg[1]),
                             (arg[2].equals(".") ? userFolder : userFolder.resolve(arg[2])).resolve(entry),
-                            FSType, arg.length > 3);
+                            arg.length > 3);
                     sendFilesList(arg[2], false);
                     if (arg.length > 3)
                         sendFilesList(arg[1], true);

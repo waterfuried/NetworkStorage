@@ -238,12 +238,8 @@ public class Prefs {
      * @throws IOException
      */
     public static void makeFolderOrZero(Path dst, long size, long modified) throws IOException {
-        if (size < 0L)
-            Files.createDirectory(dst);
-        else {
-            resetFile(dst);
-            if (!applyDateTime(dst.toString(), modified)) throw new IOException();
-        }
+        if (size < 0L) Files.createDirectory(dst); else resetFile(dst);
+        if (!applyDateTime(dst.toString(), modified)) throw new IOException();
     }
 
     /**
@@ -293,12 +289,11 @@ public class Prefs {
      * копировать/переместить файл/папку локально
      * @param src    путь к исходному файлу
      * @param dst    путь к конечному файлу
-     * @param FSType тип локальной ФС (определяется извне)
      * @param move   признак перемещения файла
      * @throws IOException если при выполнении произошла ошибка
      */
-    public static void copy(Path src, Path dst, int FSType, boolean move) throws IOException {
-        if (FSType == FS_NTFS && Files.exists(dst)) Files.delete(dst);
+    public static void copy(Path src, Path dst, boolean move) throws IOException {
+        if (Files.exists(dst)) Files.delete(dst);
         long modified = Files.getLastModifiedTime(src).toMillis();
         if (move) Files.move(src, dst); else Files.copy(src, dst);
         applyDateTime(dst.toString(), modified);
@@ -373,7 +368,7 @@ public class Prefs {
     }
 
     // простой хеш - сумма произведений кода символа и степени 2,
-    // его значение не превысит 2^20 = 1048576, учитывая ограничения
+    // его значение не превысит 2^20 (около 1 миллиона), учитывая ограничения
     // на длину строки и использование в ней букв латиницы, цифр и строчных знаков
     public static int getHash(String s) {
         int h = 0;
