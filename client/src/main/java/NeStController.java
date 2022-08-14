@@ -496,9 +496,11 @@ public class NeStController implements Initializable, NativeKeyListener {
         if (i >= 0)
             if (srcPC.isFileSelected() && dstPC.isFile(i)) {
                 if (!Messages.confirmReplacement(srcPC.getSelectedFilename())) return;
-            } else
+            } else {
                 Messages.displayWrongReplacement(opName,
                         dstPC.isFile(dstPC.getIndexOfAnyMatch(srcPC.getSelectedFilename())));
+                return;
+            }
 
         Path dst = Paths.get(dstPC.getCurPath(), srcPC.getSelectedFilename());
         long size = srcPC.getSelectedFileSize();
