@@ -65,13 +65,12 @@ public class CloudFileHandler extends SimpleChannelInboundHandler<CloudMessage> 
                     newUser = null;
             }
             AuthResponse rs = new AuthResponse(newUser, userFolder);
+            ctx.writeAndFlush(rs);
             if (newUser != null && rs.getErrCode() < 0) {
-                ctx.write(rs);
                 sendFreeSpace(ctx);
                 sendFSType(ctx);
                 ctx.writeAndFlush(new FilesListResponse(userFolder));
-            } else
-                ctx.writeAndFlush(rs);
+            }
         }
         if (cloudMessage instanceof RegRequest) {
             RegRequest rq = (RegRequest)cloudMessage;
@@ -92,13 +91,12 @@ public class CloudFileHandler extends SimpleChannelInboundHandler<CloudMessage> 
                 freeSpace = MAXSIZE;
             }
             RegResponse rs = new RegResponse(newUser, number, userFolder);
+            ctx.writeAndFlush(rs);
             if (newUser != null && rs.getErrCode() < 0) {
-                ctx.write(rs);
                 sendFreeSpace(ctx);
                 sendFSType(ctx);
                 ctx.writeAndFlush(new FilesListResponse(userFolder));
-            } else
-                ctx.writeAndFlush(rs);
+            }
         }
         // запрос завершения сеанса пользователя
         if (cloudMessage instanceof LogoutRequest) {
@@ -238,7 +236,7 @@ public class CloudFileHandler extends SimpleChannelInboundHandler<CloudMessage> 
                     int i = rq.getSrc().lastIndexOf(File.separatorChar);
                     String entry = i < 0 ? rq.getSrc() : rq.getSrc().substring(i+1);
                     copy(userFolder.resolve(rq.getSrc()), userFolder.resolve(rq.getDst()).resolve(entry),
-                            FSType, rq.moved());
+                            rq.moved());
                     sendFilesList(ctx, rq.getDst());
                     if (rq.moved())
                         sendFilesList(ctx, rq.getSrc());

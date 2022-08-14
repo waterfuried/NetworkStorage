@@ -483,31 +483,60 @@ public class NeStController implements Initializable, NativeKeyListener {
 
     // общий алгоритм копирования/перемещения файла/папки
     // с предварительной проверкой наличия (и выводом запроса на замену)
-    // одноименного элемента в папке назначения
+    // одноименного элемента в папке назначения;
     // источник определяется по выбранной (сфокусированной) панели
     void makeCopy(boolean move) {
         PanelController srcPC = getSrcPC(), dstPC = getDstPC();
-        int i = dstPC.getIndexOf(srcPC.getSelectedFilename());
         String opName = bothLocal()
                 ? move ? COM_MOVE : COM_COPY
                 : srcPC.atServerMode() ? COM_DOWNLOAD : COM_UPLOAD;
+        int i = dstPC.getIndexOf(srcPC.getSelectedFilename());
         if (i < 0 && ((dstPC.atServerMode() ? serverFS : dstPC.getClientFS()) == FS_NTFS))
             i = dstPC.getIndexOfAnyMatch(srcPC.getSelectedFilename());
         if (i >= 0)
-            if (srcPC.isFileSelected() && dstPC.isFile(i))
-                Platform.runLater(() -> {
-                    if (Messages.confirmReplacement(srcPC.getSelectedFilename()))
-                        try {
-                            if (srcPC.atServerMode() && !dstPC.atServerMode())
-                                removeFile(Paths.get(dstPC.getCurPath(), srcPC.getSelectedFilename()));
-                            doTransfer(srcPC, dstPC, move);
-                        } catch (IOException ex) {
-                            Messages.displayError(ERR_CANNOT_COMPLETE, ERR_OPERATION_FAILED, opName);
-                        }
-                });
-            else
+            if (srcPC.isFileSelected() && dstPC.isFile(i)) {
+                if (!Messages.confirmReplacement(srcPC.getSelectedFilename())) return;
+            } else
                 Messages.displayWrongReplacement(opName,
                         dstPC.isFile(dstPC.getIndexOfAnyMatch(srcPC.getSelectedFilename())));
+
+        Path dst = Paths.get(dstPC.getCurPath(), srcPC.getSelectedFilename());
+        long size = srcPC.getSelectedFileSize();
+        // копировать/переместить файл/папку и обновить панели по завершению
+        try {
+            if (dstPC.atServerMode()) {
+                if (srcPC.atServerMode()) {
+                    dstPC.createRequest();
+                    if (move) srcPC.createRequest();
+                    copyItem(srcPC.getFullSelectedFilename(), dstPC.getCurPath(), move);
+                } else
+                    upload();
+            } else {
+                boolean redraw = false;
+                if (size <= 0L) {
+                    makeFolderOrZero(dst, size, srcPC.getSelectedFileTime());
+                    if (size == 0L && move)
+                        removeFile(Paths.get(srcPC.getFullSelectedFilename()));
+                    redraw = true;
+                } else
+                    if (srcPC.atServerMode()) {
+                        if (i >= 0)
+                            removeFile(Paths.get(dstPC.getCurPath(), srcPC.getSelectedFilename()));
+                        download();
+                    } else {
+                        copy(Paths.get(srcPC.getFullSelectedFilename()), dst, move);
+                        redraw = true;
+                    }
+                if (redraw) {
+                    if (move) srcPC.updateFilesList();
+                    dstPC.updateFilesList();
+                    dstPC.getFilesTable().getSelectionModel().
+                            select(getDstPC().getIndexOf(srcPC.getSelectedFilename()));
+                }
+            }
+        } catch (IOException ex) {
+            Messages.displayError(ERR_CANNOT_COMPLETE, ERR_OPERATION_FAILED, opName);
+        }
     }
 
     // отправка запроса копирования с клиента на сервер
@@ -550,40 +579,6 @@ public class NeStController implements Initializable, NativeKeyListener {
             } catch (Exception ex) {
                 ex.printStackTrace();
                 onFailed(COM_UPLOAD, ERR_CANNOT_COMPLETE);
-            }
-        }
-    }
-
-    // копировать/переместить файл/папку и обновить панели по завершению
-    void doTransfer(PanelController srcPC, PanelController dstPC, boolean move) throws IOException {
-        Path dst = Paths.get(dstPC.getCurPath(), srcPC.getSelectedFilename());
-        long size = srcPC.getSelectedFileSize();
-        if (dstPC.atServerMode()) {
-            if (srcPC.atServerMode()) {
-                dstPC.createRequest();
-                if (move) srcPC.createRequest();
-                copyItem(srcPC.getFullSelectedFilename(), dstPC.getCurPath(), move);
-            } else
-                upload();
-        } else {
-            boolean redraw = false;
-            if (size <= 0L) {
-                makeFolderOrZero(dst, size, srcPC.getSelectedFileTime());
-                if (size == 0L && move)
-                    removeFile(Paths.get(srcPC.getFullSelectedFilename()));
-                redraw = true;
-            } else
-                if (srcPC.atServerMode())
-                    download();
-                else {
-                    copy(Paths.get(srcPC.getFullSelectedFilename()), dst, dstPC.getClientFS(), move);
-                    redraw = true;
-                }
-            if (redraw) {
-                if (move) srcPC.updateFilesList();
-                getDstPC().updateFilesList();
-                getDstPC().getFilesTable().getSelectionModel().
-                        select(getDstPC().getIndexOf(srcPC.getSelectedFilename()));
             }
         }
     }
