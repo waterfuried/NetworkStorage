@@ -48,12 +48,15 @@ public class CloudFileHandler extends SimpleChannelInboundHandler<CloudMessage> 
 
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, CloudMessage cloudMessage) throws Exception {
-        if (cloudMessage != null) System.out.println("request="+cloudMessage);
+        /*
+           чтобы узнать об ошибке передачи сообщения в канал, можно использовать следующее:
+                ChannelFuture cf = ctx.writeAndFlush(...);
+                if (!cf.isSuccess()) System.out.println("error="+cf.cause());
+         */
         // запрос авторизации
         if (cloudMessage instanceof AuthRequest) {
             AuthRequest rq = (AuthRequest)cloudMessage;
             userLogin = rq.getLogin();
-            System.out.println("authorization request: "+userLogin+" "+rq.getPasswordHash());
             String newUser = DBService.getUserInfo(userLogin, rq.getPasswordHash());
             if (newUser != null) {
                 String[] userdata = newUser.split("\t");
@@ -65,19 +68,16 @@ public class CloudFileHandler extends SimpleChannelInboundHandler<CloudMessage> 
                     newUser = null;
             }
             AuthResponse rs = new AuthResponse(newUser, userFolder);
-            ctx.writeAndFlush(rs);
             if (newUser != null && rs.getErrCode() < 0) {
                 sendFreeSpace(ctx);
                 sendFSType(ctx);
-                ctx.writeAndFlush(new FilesListResponse(userFolder));
+                sendFilesList(ctx, "");
             }
+            ctx.writeAndFlush(rs);
         }
+        // запрос регистрации
         if (cloudMessage instanceof RegRequest) {
             RegRequest rq = (RegRequest)cloudMessage;
-            System.out.println("registration request: login="+rq.getLogin()
-                    +" pwd="+rq.getPassword()
-                    +" email="+rq.getEmail()
-                    +" username="+rq.getUsername());
             int number = 0;
             String newUser = rq.getPassword().length() < MIN_PWD_LEN
                     || rq.getPassword().length() > MAX_PWD_LEN
@@ -91,37 +91,29 @@ public class CloudFileHandler extends SimpleChannelInboundHandler<CloudMessage> 
                 freeSpace = MAXSIZE;
             }
             RegResponse rs = new RegResponse(newUser, number, userFolder);
-            ctx.writeAndFlush(rs);
             if (newUser != null && rs.getErrCode() < 0) {
                 sendFreeSpace(ctx);
                 sendFSType(ctx);
-                ctx.writeAndFlush(new FilesListResponse(userFolder));
+                sendFilesList(ctx, "");
             }
+            ctx.writeAndFlush(rs);
         }
         // запрос завершения сеанса пользователя
-        if (cloudMessage instanceof LogoutRequest) {
-            System.out.println("logout request");
+        if (cloudMessage instanceof LogoutRequest)
             ctx.writeAndFlush(new LogoutResponse(userLogin));
-        }
-        // запрос свободного места в пользовательской папке
-        if (cloudMessage instanceof SpaceRequest) {
-            System.out.println("free space request");
-            // вместо выполнения запроса передать хранящееся во freeSpace значение -
-            // оно всегда актуально, поскольку обрабываются ВСЕ операции передачи
-            // и удаления файлов на сервере
-            sendFreeSpace(ctx);
-        }
+        // запрос размера свободного места в пользовательской папке:
+        // вместо выполнения запроса передать хранящееся во freeSpace значение -
+        // оно всегда актуально, поскольку обрабываются ВСЕ операции передачи
+        // и удаления файлов на сервере
+        if (cloudMessage instanceof SpaceRequest) sendFreeSpace(ctx);
         // запрос списка файлов/папок в пользовательской папке
         if (cloudMessage instanceof FilesListRequest) {
             FilesListRequest rq = (FilesListRequest)cloudMessage;
-            System.out.println("files list request: '"+rq.getPath()+"'");
-            ctx.writeAndFlush(new FilesListResponse(userFolder.resolve(rq.getPath())));
+            ctx.writeAndFlush(new FilesListResponse(userFolder.resolve(rq.getPath()), rq.getPath()));
         }
         // запрос копирования файла/папки с клиента на сервер
         if (cloudMessage instanceof UploadRequest) {
             UploadRequest rq = (UploadRequest)cloudMessage;
-            System.out.println("upload request:"+
-                    "\n"+rq.getSrcPath()+"\n"+rq.getDstPath()+"\n"+rq.getSize()+"\n"+rq.getModified());
             uploadTarget = rq.getDstPath();
             Path dst = userFolder.resolve(rq.getDstPath()).resolve(rq.getSrcPath());
             boolean exists = false;
@@ -131,6 +123,7 @@ public class CloudFileHandler extends SimpleChannelInboundHandler<CloudMessage> 
                     ? Files.isDirectory(dst) ? -1L : Files.size(dst)
                     : 0L;
             UploadResponse rs = new UploadResponse(dst, rq.getSize(), rq.getModified());
+            System.out.println(exists+" "+curSize+" "+rs.getErrCode());
             if (rs.getErrCode() < 0) {
                 int id = SRV_SUCCESS;
                 if (curSize >= 0L && rq.getSize() == 0L)
@@ -143,7 +136,8 @@ public class CloudFileHandler extends SimpleChannelInboundHandler<CloudMessage> 
                             rs.setId(id = 1+startTransfer(dst.toString(), curSize, rq.getSize(), rq.getModified()));
                 if (id == SRV_SUCCESS && rs.getErrCode() < 0) {
                     if (rq.getSize() == 0L && curSize != 0L) sendFreeSpace(ctx);
-                    ctx.writeAndFlush(new FilesListResponse(userFolder.resolve(uploadTarget)));
+                    System.out.println("'"+userFolder.resolve(uploadTarget)+"', '"+uploadTarget+"'");
+                    ctx.writeAndFlush(new FilesListResponse(userFolder.resolve(uploadTarget), uploadTarget));
                 }
             }
             ctx.writeAndFlush(rs);
@@ -156,7 +150,7 @@ public class CloudFileHandler extends SimpleChannelInboundHandler<CloudMessage> 
             boolean spaceChanged = rq.getSize() != transfer.get(id).getCurSize();
             byte[] buf = rq.getData();
             String dst = transfer.get(id).getPath();
-            boolean success = true;
+            boolean success = true, done = false;
             try (
                     BufferedOutputStream bos = new BufferedOutputStream(
                             new FileOutputStream(dst, true), BUF_SIZE)) {
@@ -173,6 +167,7 @@ public class CloudFileHandler extends SimpleChannelInboundHandler<CloudMessage> 
                         try {
                             success = applyDateTime(dst, transfer.get(id).getModified());
                             freeSpace -= transfer.get(id).getNewSize()-transfer.get(id).getCurSize();
+                            done = true;
                         }
                         catch (Exception ex) {
                             ex.printStackTrace();
@@ -181,18 +176,22 @@ public class CloudFileHandler extends SimpleChannelInboundHandler<CloudMessage> 
                     transfer.remove(id);
                 }
             }
-            UploadResponse rs = new UploadResponse(id);
-            if (success) {
-                if (spaceChanged) sendFreeSpace(ctx);
-                ctx.writeAndFlush(new FilesListResponse(userFolder.resolve(uploadTarget)));
-            } else
+            UploadResponse rs = new UploadResponse(done ? SRV_SUCCESS : id+1);
+            if (!success)
                 rs.setErrCode(ERR_CANNOT_COMPLETE);
+            else
+                /* по недосмотру список файлов на сервере обновлялся после каждого получения
+                   блока передаваемого файла, и увеличивающийся размер создаваемого на сервере
+                   файла можно было видеть, так сказать, в динамике */
+                if (done) {
+                    if (spaceChanged) sendFreeSpace(ctx);
+                    ctx.writeAndFlush(new FilesListResponse(userFolder.resolve(uploadTarget), uploadTarget));
+                }
             ctx.writeAndFlush(rs);
         }
         // запрос копирования файла/папки с сервера на клиент
         if (cloudMessage instanceof DownloadRequest) {
             DownloadRequest rq = (DownloadRequest)cloudMessage;
-            System.out.println("download request:\n"+rq.getSrcPath());
             byte[] buf = new byte[BUF_SIZE];
             try (BufferedInputStream bis = new BufferedInputStream(
                     Files.newInputStream(userFolder.resolve(rq.getSrcPath())), BUF_SIZE)) {
@@ -207,7 +206,6 @@ public class CloudFileHandler extends SimpleChannelInboundHandler<CloudMessage> 
         // запрос удаления в пользовательской папке
         if (cloudMessage instanceof RemovalRequest) {
             RemovalRequest rq = (RemovalRequest)cloudMessage;
-            System.out.println("removal request: '"+rq.getPath()+"'");
             long freed = 0;
             try { freed = Files.size(userFolder.resolve(rq.getPath())); }
             catch (IOException ex) { ex.printStackTrace(); }
@@ -222,8 +220,19 @@ public class CloudFileHandler extends SimpleChannelInboundHandler<CloudMessage> 
         // запрос на переименование файла/папки
         if (cloudMessage instanceof RenameRequest) {
             RenameRequest rq = (RenameRequest)cloudMessage;
+            Path p = userFolder.resolve(rq.getCurName());
+            long freed = Files.exists(p.resolveSibling(rq.getNewName()))
+                    ? Files.size(p.resolveSibling(rq.getNewName()))-Files.size(p)
+                    : 0L;
+            if (freed < 0L) freed = Math.min(Files.size(p.resolveSibling(rq.getNewName())),Files.size(p));
             RenameResponse rs = new RenameResponse(userFolder.resolve(rq.getCurName()), rq.getNewName());
-            if (rs.getErrCode() < 0) sendFilesList(ctx, rq.getCurName());
+            if (rs.getErrCode() < 0) {
+                if (freed > 0L) {
+                    freeSpace += freed;
+                    sendFreeSpace(ctx);
+                }
+                sendFilesList(ctx, rq.getCurName());
+            }
             ctx.writeAndFlush(rs);
         }
         // запрос локального копирования/перемещения файла/папки
@@ -237,13 +246,13 @@ public class CloudFileHandler extends SimpleChannelInboundHandler<CloudMessage> 
                     String entry = i < 0 ? rq.getSrc() : rq.getSrc().substring(i+1);
                     copy(userFolder.resolve(rq.getSrc()), userFolder.resolve(rq.getDst()).resolve(entry),
                             rq.moved());
-                    sendFilesList(ctx, rq.getDst());
                     if (rq.moved())
                         sendFilesList(ctx, rq.getSrc());
                     else {
                         freeSpace -= Files.size(userFolder.resolve(rq.getSrc()));
                         sendFreeSpace(ctx);
                     }
+                    sendFilesList(ctx, rq.getDst()+File.separatorChar+entry);
                     ctx.writeAndFlush(new CopyResponse(entry, rq.moved()));
                 } catch (Exception ex) {
                     ctx.writeAndFlush(new CopyResponse(ERR_CANNOT_COMPLETE));
@@ -253,17 +262,17 @@ public class CloudFileHandler extends SimpleChannelInboundHandler<CloudMessage> 
 
     // извещения о свободном месте в папке пользователя и типе ее ФС
     private void sendFreeSpace(ChannelHandlerContext ctx) {
-        ctx.write(new SpaceResponse(freeSpace));
+        ctx.writeAndFlush(new SpaceResponse(freeSpace));
     }
     private void sendFSType(ChannelHandlerContext ctx) {
         if (FSType == FS_UNK) FSType = getFSType(userFolder);
-        ctx.write(new FSTypeNotice(FSType));
+        ctx.writeAndFlush(new FSTypeNotice(FSType));
     }
 
     private void sendFilesList(ChannelHandlerContext ctx, String name) {
         int i = name.lastIndexOf(File.separatorChar);
-        ctx.writeAndFlush(new FilesListResponse(
-                i < 0 ? userFolder : userFolder.resolve(name.substring(0, i))));
+        String folder = i < 0 ? "" : name.substring(0, i);
+        ctx.writeAndFlush(new FilesListResponse(i < 0 ? userFolder : userFolder.resolve(folder), folder));
     }
 
     private int startTransfer(String path, long oldSize, long newSize, long modified) {

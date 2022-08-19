@@ -149,9 +149,17 @@ public class NeStController implements Initializable, NativeKeyListener {
     private boolean isShiftDown;
     private final boolean useNetty = false;
     private int serverFS;
+    /*  при копировании файлов кусками обработка каждого куска происходит достаточно часто -
+        они идут друг за другом, поэтому для уменьшения расхода памяти создание буфера стоило
+        бы сделать один раз (а не при обработке каждого куска), однако при параллельной
+        обработке теоретически возможно следующее: когда запись одного куска еще не закончена,
+        но началась обработка следующего, то буфер, используемый для записи информации
+        предыдущего куска, заполняется данными нового.
+        Использование раздельных буферов такую возможность исключает */
+    // private byte[] buf;
 
     private String user, newName; // имя пользователя; новое имя при переименовании файла/папки
-    private int dragSrc; // панель-источник перетаскивания: 0=клиент, 1=сервер
+    private int dragSrc; // панель-источник перетаскивания: 0=левая (клиент), 1=правая (сервер)
     private long restSize = 0L; // размер оставшихся данных для передачи с сервера клиенту
     private long freeSpace;
 
@@ -186,70 +194,58 @@ public class NeStController implements Initializable, NativeKeyListener {
                     }
                 } else {
                     // после авторизации могут идти любые команды/запросы, кроме команды авторизации
-                    // завершение сеанса пользователя обрабатыать особо
+                    // завершение сеанса пользователя обрабатывать особо
                     if (isExitCommand(cmd)) doLogOutActions();
                     // обработать прочие успешно выполненные команды/запросы
                     if (cmd.startsWith(getCommand(SRV_ACCEPT))) {
                         String[] arg = cmd.split(" ", 0);
                         if (arg.length < 3) continue;
-                        System.out.println("server completed " + arg[1] + " and return " + arg[2]);
                         long l;
                         switch (arg[1].toLowerCase()) {
                             case COM_GET_SPACE:
                                 try { freeSpace = Long.parseLong(arg[2]); }
                                 catch (Exception ex) { freeSpace = MAXSIZE; }
-                                Platform.runLater(() -> {
-                                    PanelController srv = getRequestingPC();
-                                    if (srv == null) srv = srvCtrl;
-                                    srv.updateFreeSpace(freeSpace);
-                                });
+                                Platform.runLater(() -> getRequestingPC().updateFreeSpace(freeSpace));
                                 break;
                             case COM_GET_FILES:
                                 try { l = Long.parseLong(arg[2]); }
                                 catch (Exception ex) { ex.printStackTrace(); break; }
                                 if (arg[3].equals(".")) arg[3] = "";
-                                PanelController srvReq = getRequestingPC(),
-                                        srv = srvReq == null ? srvCtrl : srvReq;
-                                if (l == 0) {
-                                    srv.setServerFolder(null);
-                                    try {
-                                        Semaphore semaphore = new Semaphore(0);
-                                        Platform.runLater(() -> {
-                                            srv.updateFilesList(arg[3]);
-                                            semaphore.release();
-                                        });
-                                        semaphore.acquire();
-                                    } catch (InterruptedException ex) {}
-                                    break;
-                                }
+                                PanelController srv = cliCtrl.hasRequest() && srvCtrl.hasRequest()
+                                        ? getSrcPC() : getRequestingPC();
                                 boolean correct = true;
-                                List<String> list =
-                                        new ArrayList<>(Arrays.asList(arg[4].split("\n")));
-                                if (list.size() > 0 && l == list.size()) {
-                                    List<FileInfo> fi = new ArrayList<>();
-                                    int i = 0;
-                                    while (i < l && correct) {
-                                        String[] item = list.get(i++).split(":");
-                                        if (item.length == 3)
-                                            try {
-                                                fi.add(new FileInfo(decodeSpaces(item[0]),
-                                                        Long.parseLong(item[1]),
-                                                        FileInfo.getModified(Long.parseLong(item[2]))));
-                                            } catch (Exception ex) {
+                                if (l == 0)
+                                    srv.setServerFolder(null);
+                                else {
+                                    List<String> list =
+                                            new ArrayList<>(Arrays.asList(arg[4].split("\n")));
+                                    correct = list.size() > 0 && l == list.size();
+                                    if (correct) {
+                                        List<FileInfo> fi = new ArrayList<>();
+                                        int i = 0;
+                                        while (i < l && correct) {
+                                            String[] item = list.get(i++).split(":");
+                                            if (item.length == 3)
+                                                try {
+                                                    fi.add(new FileInfo(decodeSpaces(item[0]),
+                                                            Long.parseLong(item[1]),
+                                                            FileInfo.getModified(Long.parseLong(item[2]))));
+                                                } catch (Exception ex) {
+                                                    correct = false;
+                                                    ex.printStackTrace();
+                                                }
+                                            else
                                                 correct = false;
-                                                ex.printStackTrace();
-                                            }
-                                        else
-                                            correct = false;
+                                        }
+                                        if (correct) srv.setServerFolder(fi);
                                     }
-                                    if (correct) srv.setServerFolder(fi);
-                                } else
-                                    correct = false;
-                                if (correct) {
+                                }
+                                if (correct)
                                     // чем расхлебывать неожиданности параллельных выполнений
                                     // этого же метода в основном потоке, стоит дождаться его
                                     // окончания здесь; вместо семафора можно использовать
-                                    // CountDownLatch
+                                    // CountDownLatch. Иногда возможен deadlock - ожидание у
+                                    // семафора начинается до запуска потока, его отключающего
                                     try {
                                         Semaphore semaphore = new Semaphore(0);
                                         Platform.runLater(() -> {
@@ -257,8 +253,8 @@ public class NeStController implements Initializable, NativeKeyListener {
                                             semaphore.release();
                                         });
                                         semaphore.acquire();
-                                    } catch (InterruptedException ex) {}
-                                } else
+                                    } catch (InterruptedException ex) { ex.printStackTrace(); }
+                                else
                                     Platform.runLater(() -> Messages.displayError(ERR_WRONG_LIST, ""));
                                 break;
                             case COM_UPLOAD:
@@ -286,6 +282,8 @@ public class NeStController implements Initializable, NativeKeyListener {
                                 PanelController dst = getDstPC();
                                 dst.getFilesTable().getSelectionModel()
                                         .select(dst.getIndexOf(decodeSpaces(arg[3])));
+                                if (arg[1].equalsIgnoreCase(COM_COPY))
+                                    Platform.runLater(() -> getSrcPC().updateFreeSpace(freeSpace));
                                 break;
                             case COM_FS: serverFS = Integer.parseInt(arg[2]);
                         }
@@ -313,11 +311,9 @@ public class NeStController implements Initializable, NativeKeyListener {
         try {
             while (true) {
                 CloudMessage message = nettyNetwork.read();
-                if (message != null) System.out.println("response="+message);
                 // запрос авторизации
                 if (message instanceof AuthResponse) {
                     AuthResponse rs = (AuthResponse)message;
-                    System.out.println("authorization, server return "+rs.getUsername());
                     user = rs.getUsername();
                     if (user != null && user.length() > 0 && rs.getErrCode() < 0)
                         doLogInActions();
@@ -329,52 +325,45 @@ public class NeStController implements Initializable, NativeKeyListener {
                 // запрос регистрации
                 if (message instanceof RegResponse) {
                     RegResponse rs = (RegResponse)message;
-                    System.out.println("registration, server return "+rs.getUsername());
                     if ((user = rs.getUsername()) != null && rs.getErrCode() < 0)
                         doLogInActions();
                     else
                         onLoginFailed(rs.getErrCode());
                 }
                 // запрос на завершение сеанса пользователя
-                if (message instanceof LogoutResponse) {
-                    LogoutResponse rs = (LogoutResponse)message;
-                    System.out.println("logout, server return "+rs.getLogin());
-                    if ((rs.getLogin()).equals(user)) doLogOutActions();
-                }
+                if (message instanceof LogoutResponse)
+                    if (((LogoutResponse)message).getLogin().equals(user)) doLogOutActions();
                 // запрос размера свободного места в папке пользователя
-                if (message instanceof SpaceResponse) {
-                    SpaceResponse rs = (SpaceResponse)message;
-                    System.out.println("free space, server return "+(freeSpace = rs.getSpace()));
-                    Platform.runLater(() -> {
-                        PanelController srv = getRequestingPC();
-                        if (srv == null) srv = srvCtrl;
-                        srv.updateFreeSpace(freeSpace);
-                    });
-                }
+                if (message instanceof SpaceResponse)
+                    Platform.runLater(() -> getRequestingPC()
+                            .updateFreeSpace(freeSpace = ((SpaceResponse)message).getSpace()));
                 // запрос списка файлов в указанной папке
-                // TODO: ответы именно на запросы списков элементов почему-то не появляются среди полученных,
-                //  хотя обработчик запросов на сервере их принимает и отправляет ответы
                 if (message instanceof FilesListResponse) {
                     FilesListResponse rs = (FilesListResponse)message;
-                    System.out.println("files, server return:" +
-                            "\nerr=" + rs.getErrCode() +
-                            "\nentries=" + rs.getEntriesCount() +
-                            "\npath=" + rs.getFolder() +
-                            "\nlist=" + rs.getEntries());
                     if (rs.getErrCode() < 0) {
-                        PanelController srv = getRequestingPC();
-                        if (srv == null) srv = srvCtrl;
+                        PanelController srv = cliCtrl.hasRequest() && srvCtrl.hasRequest()
+                                ? getSrcPC() : getRequestingPC();
                         srv.setServerFolder(rs.getEntriesCount() == 0 ? null : rs.getEntries());
-                        srv.updateFilesList();
+                        try {
+                            Semaphore semaphore = new Semaphore(0);
+                            Platform.runLater(() -> {
+                                srv.updateFilesList(rs.getFolder());
+                                semaphore.release();
+                            });
+                            semaphore.acquire();
+                        } catch (InterruptedException ex) { ex.printStackTrace(); }
                     } else
                         Messages.displayError(ErrorCode.values()[rs.getErrCode()], "");
                 }
                 // запрос копирования с клиента на сервер
                 if (message instanceof UploadResponse) {
                     UploadResponse rs = (UploadResponse)message;
-                    if (rs.getErrCode() < 0)
-                        if (rs.getId() == SRV_SUCCESS) onUploaded(); else uploadData(rs.getId());
-                    else
+                    if (rs.getErrCode() < 0) {
+                        if (rs.getId() == SRV_SUCCESS)
+                            onUploaded();
+                        else
+                            if (!rs.started()) uploadData(rs.getId());
+                    } else
                         onFailed(COM_UPLOAD, ErrorCode.values()[rs.getErrCode()]);
                 }
                 // запрос копирования с сервера на клиент
@@ -403,13 +392,15 @@ public class NeStController implements Initializable, NativeKeyListener {
                 }
                 // извещение от сервера о типе его ФС
                 if (message instanceof FSTypeNotice)
-                    serverFS = ((FSTypeNotice)message).getFSType();
+                    serverFS = ((FSTypeNotice) message).getFSType();
                 // запрос копирования/перемещения
                 if (message instanceof CopyResponse) {
                     CopyResponse rs = (CopyResponse)message;
                     if (rs.getErrCode() < 0) {
                         PanelController dst = getDstPC();
                         dst.getFilesTable().getSelectionModel().select(dst.getIndexOf(rs.getName()));
+                        if (!rs.moved())
+                            Platform.runLater(() -> getSrcPC().updateFreeSpace(freeSpace));
                     } else
                         onFailed(rs.moved() ? COM_MOVE : COM_COPY, ErrorCode.values()[rs.getErrCode()]);
                 }
@@ -508,8 +499,8 @@ public class NeStController implements Initializable, NativeKeyListener {
         try {
             if (dstPC.atServerMode()) {
                 if (srcPC.atServerMode()) {
-                    dstPC.createRequest();
                     if (move) srcPC.createRequest();
+                    dstPC.createRequest();
                     copyItem(srcPC.getFullSelectedFilename(), dstPC.getCurPath(), move);
                 } else
                     upload();
@@ -530,10 +521,10 @@ public class NeStController implements Initializable, NativeKeyListener {
                         redraw = true;
                     }
                 if (redraw) {
+                    String srcName = srcPC.getSelectedFilename();
                     if (move) srcPC.updateFilesList();
                     dstPC.updateFilesList();
-                    dstPC.getFilesTable().getSelectionModel().
-                            select(getDstPC().getIndexOf(srcPC.getSelectedFilename()));
+                    dstPC.getFilesTable().getSelectionModel().select(getDstPC().getIndexOf(srcName));
                 }
             }
         } catch (IOException ex) {
@@ -589,7 +580,6 @@ public class NeStController implements Initializable, NativeKeyListener {
     // /download source_path
     private void download() {
         //TODO: при копировании больших файлов следовало бы отображать индикатор копирования
-        getDstPC().createRequest();
         if (useNetty)
             sendToServer(new DownloadRequest(getSrcPC().getFullSelectedFilename()));
         else
@@ -692,6 +682,8 @@ public class NeStController implements Initializable, NativeKeyListener {
             if (cliCtrl.atServerMode())
                 cliCtrl.setLocalMode(srvCtrl.atServerMode() ? "." : srvCtrl.getCurPath());
             srvCtrl.setLocalMode(cliCtrl.getCurPath());
+            cliCtrl.setServerFolder(null);
+            srvCtrl.setServerFolder(null);
             refreshMenus(false);
             refreshFileCmd();
             refreshFileOps();
@@ -737,13 +729,12 @@ public class NeStController implements Initializable, NativeKeyListener {
         });
     }
     void onRemoved() {
-        PanelController srv = getSrcPC();
-        if (srv.getFilesTable().getItems() != null) {
-            if (sameContent()) {
-                PanelController other = getDstPC();
-                other.setServerFolder(srv.getServerFolder());
-                other.updateFilesList();
-            }
+        PanelController other = getDstPC();
+        if (bothLocal())
+            Platform.runLater(() -> other.updateFreeSpace(freeSpace));
+        if (sameContent()) {
+            other.setServerFolder(getSrcPC().getServerFolder());
+            other.updateFilesList();
         }
         refreshFileOps();
     }
@@ -762,14 +753,16 @@ public class NeStController implements Initializable, NativeKeyListener {
                 removeFile(Paths.get(srv.getFullSelectedFilename()));
         } else switch (errCode) {
             case ERR_OUT_OF_SPACE:
-                Messages.displayError(ERR_CANNOT_COMPLETE,
-                        ERR_OPERATION_FAILED, errMessage[ERR_OUT_OF_SPACE.ordinal()], cmd);
+                Platform.runLater(() ->
+                    Messages.displayError(ERR_CANNOT_COMPLETE,
+                        ERR_OPERATION_FAILED, errMessage[errCode.ordinal()], cmd));
                 break;
             case ERR_INTERNAL_ERROR:
-                Messages.displayError(errCode, ERR_OPERATION_FAILED);
+                Platform.runLater(() -> Messages.displayError(errCode, ERR_OPERATION_FAILED));
                 break;
             case ERR_CANNOT_COMPLETE:
-                Messages.displayError(errCode, ERR_OPERATION_FAILED, cmd);
+            case ERR_NOT_EMPTY:
+                Platform.runLater(() -> Messages.displayError(errCode, ERR_OPERATION_FAILED, cmd));
         }
     }
 
@@ -791,23 +784,30 @@ public class NeStController implements Initializable, NativeKeyListener {
         ActionMenu.setDisable(noneSelected);
         menuItemRemove.setDisable(noneSelected);
         menuItemRename.setDisable(noneSelected);
-        if (bothLocal()) {
-            boolean equalPaths = sameContent();
-            menuItemUpload.setDisable(noneSelected || equalPaths);
-            menuItemDownload.setDisable(noneSelected || equalPaths);
-        } else {
-            menuItemUpload.setDisable(noneSelected || (clientFocused && cliCtrl.atServerMode()) ||
-                    (serverFocused && srvCtrl.atServerMode()));
-            menuItemDownload.setDisable(noneSelected || (clientFocused && !cliCtrl.atServerMode()) ||
-                    (serverFocused && !srvCtrl.atServerMode()));
+        boolean cantCopy, cantMove;
+        if (bothLocal())
+            cantCopy = cantMove = noneSelected || sameContent();
+        else {
+            cantCopy = noneSelected || (clientFocused && cliCtrl.atServerMode()) ||
+                    (serverFocused && srvCtrl.atServerMode());
+            cantMove = noneSelected || (clientFocused && !cliCtrl.atServerMode()) ||
+                    (serverFocused && !srvCtrl.atServerMode());
         }
+        menuItemUpload.setDisable(cantCopy);
+        menuItemDownload.setDisable(cantMove);
+        cliCtrl.refreshFileOps(cantCopy, cantMove);
+        srvCtrl.refreshFileOps(cantCopy, cantMove);
     }
 
     // обновить названия операций с файлами/папками
     void refreshFileCmd() {
         boolean both = bothLocal();
-        menuItemUpload.setText(capitalize(both ? COM_COPY : COM_UPLOAD));
-        menuItemDownload.setText(capitalize(both ? COM_MOVE : COM_DOWNLOAD));
+        String cmdCopy = capitalize(both ? COM_COPY : COM_UPLOAD),
+               cmdMove = capitalize(both ? COM_MOVE : COM_DOWNLOAD);
+        menuItemUpload.setText(cmdCopy);
+        menuItemDownload.setText(cmdMove);
+        cliCtrl.refreshFileCmd(cmdCopy, cmdMove);
+        srvCtrl.refreshFileCmd(cmdCopy, cmdMove);
     }
 
     // обновление второй панели при необходимости,
@@ -858,9 +858,7 @@ public class NeStController implements Initializable, NativeKeyListener {
 
     // определить панель с запросом
     private PanelController getRequestingPC() {
-        if (cliCtrl.atServerMode() && cliCtrl.hasRequest()) return cliCtrl;
-        if (srvCtrl.atServerMode() && srvCtrl.hasRequest()) return srvCtrl;
-        return null;
+        return cliCtrl.atServerMode() && cliCtrl.hasRequest() ? cliCtrl : srvCtrl;
     }
 
     /*
@@ -904,8 +902,7 @@ public class NeStController implements Initializable, NativeKeyListener {
                 try {
                     Files.delete(Paths.get(pc.getFullSelectedFilename()));
                     pc.updateFilesList();
-                    if (sameContent())
-                        (cliCtrl.getFilesTable().isFocused() ? srvCtrl : cliCtrl).updateFilesList();
+                    if (sameContent()) getDstPC().updateFilesList();
                 } catch (IOException ex) {
                     ErrorCode errCode = ERR_NO_SUCH_FILE;
                     if (ex instanceof DirectoryNotEmptyException) errCode = ERR_NOT_EMPTY;
@@ -950,7 +947,11 @@ public class NeStController implements Initializable, NativeKeyListener {
             (menuItemViewLeft.getText().endsWith("client") ? "server" : "client"));
         if (menuItemViewLeft.getText().endsWith("server")) {
             cliCtrl.setServerMode(srvCtrl.atServerMode() ? srvCtrl.getCurPath() : "");
-            if (cliCtrl.getServerFolder() == null)
+            if (!srvCtrl.atServerMode()) {
+                cliCtrl.setServerFolder(null);
+                cliCtrl.createRequest();
+                requestFiles("");
+            } else
                 cliCtrl.setServerFolder(srvCtrl.getServerFolder());
             cliCtrl.updateFilesList();
             cliCtrl.updateFreeSpace(freeSpace);
@@ -966,6 +967,12 @@ public class NeStController implements Initializable, NativeKeyListener {
             (menuItemViewRight.getText().endsWith("client") ? "server" : "client"));
         if (menuItemViewRight.getText().endsWith("server")) {
             srvCtrl.setServerMode(cliCtrl.atServerMode() ? cliCtrl.getCurPath() : "");
+            if (!cliCtrl.atServerMode()) {
+                srvCtrl.setServerFolder(null);
+                srvCtrl.createRequest();
+                requestFiles("");
+            } else
+                srvCtrl.setServerFolder(cliCtrl.getServerFolder());
             srvCtrl.updateFilesList();
             srvCtrl.updateFreeSpace(freeSpace);
         } else

@@ -14,23 +14,34 @@ maxHeight="-Infinity" maxWidth="-Infinity" minHeight="-Infinity" minWidth="-Infi
     <HBox>
         <VBox alignment="CENTER" HBox.hgrow="ALWAYS">
             <Label fx:id="nameLabel" text="Client files">
-            <font>
-               <Font name="System Bold" size="12.0" />
-            </font></Label>
+                <font> <Font name="System Bold" size="12.0"/> </font>
+            </Label>
         </VBox>
-        <ComboBox fx:id="disks" onAction="#cmbxChangeDisk" />
-        <TextField fx:id="curPath" editable="false" HBox.hgrow="ALWAYS" />
+        <ComboBox fx:id="disks" onAction="#cmbxChangeDisk"/>
+        <TextField fx:id="curPath" editable="false" HBox.hgrow="ALWAYS"/>
         <Button fx:id="btnLevelUp" onAction="#btnLevelUpAction" text="..">
-         <tooltip><Tooltip text="One level up" /></tooltip>
+           <tooltip><Tooltip text="One level up"/></tooltip>
         </Button>
         <Button fx:id="btnGoBack" disable="true" onAction="#btnGoBackAction" text="←">
-         <tooltip><Tooltip text="Go back" /></tooltip>
+           <tooltip><Tooltip text="Go back"/></tooltip>
         </Button>
         <Button onAction="#btnRefreshAction" text="⟳">
-         <tooltip><Tooltip text="Refresh" /></tooltip>
+           <tooltip><Tooltip text="Refresh"/></tooltip>
         </Button>
     </HBox>
-    <TableView fx:id="filesTable" editable="true" VBox.vgrow="ALWAYS" onKeyReleased="#keyboardHandler" onMouseClicked="#mouseHandler" />
+    <TableView fx:id="filesTable" editable="true" VBox.vgrow="ALWAYS"
+               onKeyReleased="#keyboardHandler" onMouseClicked="#mouseHandler">
+      <contextMenu>
+         <ContextMenu>
+           <items>
+             <MenuItem fx:id="cmiCopy" disable="true"/>
+             <MenuItem fx:id="cmiMove" disable="true"/>
+             <MenuItem fx:id="cmiRename"/>
+             <MenuItem fx:id="cmiRemove"/>
+           </items>
+         </ContextMenu>
+      </contextMenu>
+    </TableView>
     <properties>
         <ctrlRef><fx:reference source="controller"/></ctrlRef>
     </properties>
