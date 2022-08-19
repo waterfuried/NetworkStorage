@@ -14,7 +14,6 @@ public class Prefs {
     public static final long MAXSIZE = 1_000_000_000; // максимальный размер папки на сервере - 1 Гб
     public static final int BUF_SIZE = 10*1024; // размер буфера чтения/записи
     public static final int MIN_PWD_LEN = 4, MAX_PWD_LEN = 12; // минимальная и максимальная длина пароля
-    public static final int VIEWABLE_SIZE = 256; // !!! отладочное: макс. длина отображаемого ответа сервера
 
     // название проекта
     public static final String SHORT_TITLE = "NeSt";

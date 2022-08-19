@@ -24,6 +24,7 @@ public class PanelController implements Initializable {
     @FXML private TextField curPath;
     @FXML private TableView<FileInfo> filesTable;
     @FXML private Button btnLevelUp, btnGoBack;
+    @FXML private MenuItem cmiCopy, cmiMove, cmiRename, cmiRemove;
 
     private Stack<String> prevPath;
     private int curDiskIdx, clientFS;
@@ -43,28 +44,21 @@ public class PanelController implements Initializable {
         nameLabel.setText("Server files ("+(freeSpace/1000/1000)+"M free)");
     }
 
+    private void setMode(String path, boolean local) {
+        serverMode = !local;
+        if (local) nameLabel.setText("Client files");
+        disks.setVisible(local);
+        setCurPath(path);
+        filesTable.getSelectionModel().clearSelection();
+        // метод getParent не обращается к ФС
+        btnLevelUp.setDisable(local ? Paths.get(getCurPath()).getParent() == null : path.length() == 0);
+        btnGoBack.setDisable(true);
+        if (prevPath != null) prevPath.clear();
+    }
+
     void setServerMode() { setServerMode(""); }
-
-    void setServerMode(String path) {
-        serverMode = true;
-        disks.setVisible(false);
-        btnLevelUp.setDisable(path.length() == 0);
-        btnGoBack.setDisable(true);
-        setCurPath(path);
-        if (prevPath != null) prevPath.clear();
-        btnGoBack.setDisable(true);
-    }
-
-    void setLocalMode(String path) {
-        serverMode = false;
-        nameLabel.setText("Client files");
-        disks.setVisible(true);
-        btnLevelUp.setDisable(Paths.get(path).getParent() == null);
-        btnGoBack.setDisable(true);
-        setCurPath(path);
-        if (prevPath != null) prevPath.clear();
-        btnGoBack.setDisable(true);
-    }
+    void setServerMode(String path) { setMode(path, false); }
+    void setLocalMode(String path) { setMode(path, true); }
 
     boolean atServerMode() { return serverMode; }
 
@@ -81,10 +75,8 @@ public class PanelController implements Initializable {
             }
             if (serverMode) {
                 refreshCurPath(path);
-                if (serverFolder != null) {
-                    filesTable.getItems().setAll(serverFolder);
-                    requesting = false;
-                }
+                if (serverFolder != null) filesTable.getItems().setAll(serverFolder);
+                requesting = false;
             } else {
                 Path p = Paths.get(path);
                 refreshCurPath(p.normalize().toAbsolutePath().toString());
@@ -314,6 +306,20 @@ public class PanelController implements Initializable {
         if (ev.getClickCount() == 2) processItem();
     }
 
+    // обновить названия и доступность элементов контекстного меню
+    void refreshFileCmd(String cmdCopy, String cmdMove) {
+        cmiCopy.setText(cmdCopy);
+        cmiMove.setText(cmdMove);
+    }
+
+    void refreshFileOps(boolean cantCopy, boolean cantMove) {
+        cmiCopy.setDisable(cantCopy);
+        cmiMove.setDisable(cantMove);
+        boolean empty = filesTable.getItems().size() == 0;
+        cmiRename.setDisable(empty);
+        cmiRemove.setDisable(empty);
+    }
+
     /*
         Урок 3. Фреймворк Netty
         1. Взять код с урока и добавить логику навигации по папкам на клиенте и на сервере.
@@ -385,5 +391,18 @@ public class PanelController implements Initializable {
 
         updateFilesList(".");
         clientFS = getFSType(Paths.get(getCurPath()));
+        boolean empty = filesTable.getItems().size() == 0;
+        cmiCopy.setText(capitalize(COM_COPY));
+        cmiCopy.setDisable(empty);
+        cmiCopy.setOnAction(ev -> parentController.copyOrUpload());
+        cmiMove.setText(capitalize(COM_MOVE));
+        cmiMove.setDisable(empty);
+        cmiMove.setOnAction(ev -> parentController.moveOrDownload());
+        cmiRename.setText(capitalize(COM_RENAME));
+        cmiRename.setDisable(empty);
+        cmiRename.setOnAction(ev -> parentController.tryRename());
+        cmiRemove.setText(capitalize(COM_REMOVE));
+        cmiRemove.setDisable(empty);
+        cmiRemove.setOnAction(ev -> parentController.tryRemove());
     }
 }

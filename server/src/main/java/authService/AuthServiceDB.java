@@ -160,7 +160,7 @@ public class AuthServiceDB implements AuthService {
             return 0;
         else {
             int number = getFirstFreeNumber();
-            if (number <= 0) return number;
+            if (number <= 0) return number == 0 ? -2 : number;
             try (PreparedStatement ps = connection.prepareStatement(
                     adjustQuery("INSERT INTO %s (login, pwd, email, username, usernum) VALUES (?, ?, ?, ?, ?);"))) {
                 ps.setString(1, login);

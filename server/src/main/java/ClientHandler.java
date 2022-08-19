@@ -113,8 +113,6 @@ public class ClientHandler {
     // обработка команд/запросов клиента
     void readInputStream() throws Exception {
         String cmd = is.readUTF();
-        System.out.println("received: "+
-                (cmd.length() <= VIEWABLE_SIZE ? cmd : cmd.substring(0, VIEWABLE_SIZE)));
         if (!cmd.startsWith(COM_ID)) return;
         // s - только для обработки команд, регистр в ее аргументах важен - для них cmd
         String s = cmd.toLowerCase();
@@ -273,7 +271,7 @@ public class ClientHandler {
             // при использовании любых стандартных однобайтных кодировок
             // происходит преобразование символов - старше 127 кодируются в другие,
             // UTF-8 кодирует символы до 128 одним байтом, со 128 - двумя
-            //byte[] buf = Arrays.copyOf(arg[3].getBytes(StandardCharsets.US_ASCII),arg[3].length());
+            //buf = Arrays.copyOf(arg[3].getBytes(StandardCharsets.US_ASCII),arg[3].length());
             String dst = transfer.get(id).getPath();
             boolean success = true;
             try (BufferedOutputStream bos = new BufferedOutputStream(
@@ -352,8 +350,18 @@ public class ClientHandler {
         // /rename current_name_with_path new_name
         if (s.startsWith(getCommand(COM_RENAME))) {
             String[] arg = cmd.split(" ");
-            int errCode = rename(userFolder.resolve(arg[1]), arg[2]);
+            arg[1] = decodeSpaces(arg[1]); arg[2] = decodeSpaces(arg[2]);
+            Path p = userFolder.resolve(arg[1]);
+            long freed = Files.exists(p.resolveSibling(arg[2]))
+                    ? Files.size(p.resolveSibling(arg[2]))-Files.size(p)
+                    : 0L;
+            if (freed < 0L) freed = Math.min(Files.size(p.resolveSibling(arg[2])),Files.size(p));
+            int errCode = rename(p, arg[2]);
             if (errCode < 0) {
+                if (freed > 0L) {
+                    freeSpace += freed;
+                    sendFreeSpace();
+                }
                 sendFilesList(arg[1], true);
                 sendResponse(getCommand(SRV_ACCEPT, COM_RENAME, SRV_SUCCESS + ""));
             } else
@@ -364,6 +372,7 @@ public class ClientHandler {
         // /copy source_path destination_path [1=move]
         if (s.startsWith(getCommand(COM_COPY))) {
             String[] arg = cmd.split(" ");
+            arg[1] = decodeSpaces(arg[1]); arg[2] = decodeSpaces(arg[2]);
             if (arg.length == 3 && freeSpace-Files.size(userFolder.resolve(arg[1])) <= 0L)
                 sendOpFailedResponse(ERR_OUT_OF_SPACE.ordinal(), COM_COPY);
             else
@@ -373,13 +382,13 @@ public class ClientHandler {
                     copy(userFolder.resolve(arg[1]),
                             (arg[2].equals(".") ? userFolder : userFolder.resolve(arg[2])).resolve(entry),
                             arg.length > 3);
-                    sendFilesList(arg[2], false);
                     if (arg.length > 3)
                         sendFilesList(arg[1], true);
                     else {
                         freeSpace -= Files.size(userFolder.resolve(arg[1]));
                         sendFreeSpace();
                     }
+                    sendFilesList(arg[2], false);
                     sendResponse(getCommand(SRV_ACCEPT, arg.length > 3 ? COM_MOVE : COM_COPY,
                             SRV_SUCCESS + "", encodeSpaces(entry)));
                 } catch (Exception ex) {

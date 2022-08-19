@@ -5,7 +5,7 @@ import java.nio.file.*;
 import java.time.*;
 import java.util.*;
 
-public class FileInfo {
+public class FileInfo implements Serializable {
     private String filename;
     private final long size; //определяет также тип элемента: -1 - папка, иначе - файл
     private final LocalDateTime modified;

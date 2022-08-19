@@ -1,32 +1,28 @@
 package cloud.response;
 
 import cloud.CloudMessage;
-import prefs.FileInfo;
-import prefs.Prefs;
+import prefs.*;
 
-import java.io.IOException;
+import java.io.*;
 
 import java.nio.file.*;
 
-import java.util.List;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
+import java.util.*;
+import java.util.stream.*;
 
 /**
  * ответ на запрос списка файлов и папок в папке пользователя на сервере
  * возвращает код ошибки, если указанный путь в папке не существует
- * TODO: по непонятной причине этот ответ не обрабатывается (его нет среди полученных ответов)
- *       в клиентском цикле чтения ответов сервера
  */
 public class FilesListResponse implements CloudMessage {
     private List<FileInfo> entries;
-    private final Path folder;
+    private final String folder;
     private int entriesCount, errCode;
 
-    public FilesListResponse(Path folder) {
+    public FilesListResponse(Path path, String folder) {
         this.folder = folder;
         errCode = -1;
-        try (Stream<Path> pathStream = Files.list(folder)) {
+        try (Stream<Path> pathStream = Files.list(path)) {
             entries = pathStream
                     .map(FileInfo::new)
                     .collect(Collectors.toList());
@@ -36,11 +32,10 @@ public class FilesListResponse implements CloudMessage {
             errCode = Prefs.ErrorCode.ERR_NO_SUCH_FILE.ordinal();
             ex.printStackTrace();
         }
-        System.out.println("folder='"+folder+"' err="+errCode+" count="+entriesCount+" list="+entries);
     }
 
     public List<FileInfo> getEntries() { return entries; }
     public int getErrCode() { return errCode; }
     public int getEntriesCount() { return entriesCount; }
-    public Path getFolder() { return folder; }
+    public String getFolder() { return folder; }
 }
