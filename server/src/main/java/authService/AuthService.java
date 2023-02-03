@@ -19,6 +19,9 @@ public interface AuthService {
      * 0 - в противном случае (если логин/никнейм заняты)
      **/
     int registerUser(String login, String password, String username, String ... userdata);
+    // регистрация в контракте интерфейса необходима из-за того, что
+    // сервер (обработчик запросов клиента) использует ссылку на него
+    int registerUser(AuthData data);
 
     /**
      * обновить данные пользователя - например, изменить имя (ник)

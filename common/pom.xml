@@ -8,9 +8,8 @@
         <version>1.0-SNAPSHOT</version>
     </parent>
 
-    <modelVersion>4.0.0</modelVersion>
-
     <artifactId>common</artifactId>
+    <modelVersion>4.0.0</modelVersion>
 
     <properties>
         <maven.compiler.source>17</maven.compiler.source>

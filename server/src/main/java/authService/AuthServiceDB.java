@@ -176,6 +176,17 @@ public class AuthServiceDB implements AuthService {
     }
 
     /**
+     * зарегистрировать нового пользователя: вариация с паттерном Строитель
+     */
+    @Override public int registerUser(AuthData data) {
+        return registerUser(
+                data.getLogin(),
+                data.getPassword(),
+                data.getUsername(),
+                data.getUserData());
+    }
+
+    /**
      * найти первый свободный номер пользователя
      * @return
      *      положительное целое - найденный номер,
