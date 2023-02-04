@@ -163,7 +163,15 @@ public class ClientHandler {
             String newUser = val[2].length() < MIN_PWD_LEN || val[2].length() > MAX_PWD_LEN
                     ? null
                     : (number = DBService.registerUser(
-                            val[1], encode(decodeSpaces(val[2]),false), val[3], val[4])) > 0
+                            // с шаблоном "Строитель"
+                            new AuthData.AuthBuilder()
+                                    .login(val[1])
+                                    .password(encode(decodeSpaces(val[2]), false))
+                                    .username(val[3])
+                                    .userData(new String[]{ val[4] })
+                                    .build())) > 0
+                            // ... и без него
+                            // val[1], encode(decodeSpaces(val[2]),false), val[3], val[4])) > 0
                         ? val[3] : null;
             if (newUser != null) {
                 userFolder = serverURL.resolve("user" + number);

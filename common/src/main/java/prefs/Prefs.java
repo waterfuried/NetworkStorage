@@ -109,6 +109,10 @@ public class Prefs {
 
     /*
       методы обработки команд
+
+      примечание:
+        используемый в нескольких методах класс StringBuilder (появившийся с версии Java 1.5)
+        является примером реализации паттерна проектирования Строитель (Builder)
     */
     public static String getCommand(String cmdName, String ... args) {
         if (args == null || args.length == 0) return COM_ID + cmdName;
@@ -377,6 +381,8 @@ public class Prefs {
 
     // преобразовать строку к виду с заглавной буквы
     public static String capitalize(String s) {
+        // с версии Java 11 в классе String введен метод isBlank(),
+        // проверяющий строку на пустоту, с учетом присутствия пробельных (whitespace) символов
         if (s == null || s.trim().length() == 0) return s;
         return s.substring(0, 1).toUpperCase()+s.substring(1);
     }
