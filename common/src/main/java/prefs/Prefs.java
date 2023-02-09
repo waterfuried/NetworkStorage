@@ -90,6 +90,9 @@ public class Prefs {
             "Folder access denied",
             "Rename operation does not support moving"
     };
+    // сообщение при журналировании ошибок обработки запросов сервером
+    public static final String SERVER_ERROR_HANDLER =
+            "The following error occurred while processing '%s' request: %s";
 
     // папка для имитации сетевого адреса сервера
     // System.getProperty("user.home") рекурсивное вычисление размера домашней папки (~14Гб, ~80K файлов)

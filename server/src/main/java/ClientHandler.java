@@ -92,10 +92,13 @@ public class ClientHandler {
         sendResponse(getCommand(SRV_ACCEPT, COM_GET_FS, FSType+""));
     }
 
-    private void sendOpFailedResponse(int errCode) {
+    private void sendOpFailedResponse(int errCode, String cmdName, boolean logged) {
+        if (!logged)
+            logger.logError(String.format(SERVER_ERROR_HANDLER, cmdName, errMessage[errCode]));
         sendResponse(getCommand(SRV_REFUSE, errCode));
     }
     private void sendOpFailedResponse(int errCode, String cmd) {
+        logger.logError(String.format(SERVER_ERROR_HANDLER, cmd, errMessage[errCode]));
         sendResponse(getCommand(SRV_REFUSE, errCode+"", cmd));
     }
 
@@ -116,6 +119,7 @@ public class ClientHandler {
         if (!cmd.startsWith(COM_ID)) return;
         // s - только для обработки команд, регистр в ее аргументах важен - для них cmd
         String s = cmd.toLowerCase();
+        boolean errorLogged = false;
 
         // запрос авторизации
         if (s.startsWith(getCommand(COM_AUTHORIZE))) {
@@ -135,6 +139,7 @@ public class ClientHandler {
                         } catch (Exception ex) {
                             b = false;
                             logger.logError(ex);
+                            errorLogged = true;
                         }
                         if (!b) errCode = ERR_INTERNAL_ERROR.ordinal();
                     }
@@ -146,12 +151,12 @@ public class ClientHandler {
             // в случае ошибки - соответствующий ей код
             if (errCode < 0) {
                 freeSpace = MAXSIZE - FileInfo.getSizes(userFolder);
-                sendResponse(getCommand(SRV_ACCEPT, SRV_SUCCESS + "", newUser));
+                sendResponse(getCommand(SRV_ACCEPT, SRV_SUCCESS + "", encodeSpaces(newUser)));
                 sendFreeSpace();
                 sendFilesList(".", false);
                 sendFSType();
             } else
-                sendOpFailedResponse(errCode);
+                sendOpFailedResponse(errCode, COM_AUTHORIZE, errorLogged);
         }
 
         // запрос регистрации
@@ -167,12 +172,12 @@ public class ClientHandler {
                             new AuthData.AuthBuilder()
                                     .login(val[1])
                                     .password(encode(decodeSpaces(val[2]), false))
-                                    .username(val[3])
+                                    .username(decodeSpaces(val[3]))
                                     .userData(new String[]{ val[4] })
                                     .build())) > 0
                             // ... и без него
-                            // val[1], encode(decodeSpaces(val[2]),false), val[3], val[4])) > 0
-                        ? val[3] : null;
+                            //val[1], encode(decodeSpaces(val[2]),false), decodeSpaces(val[3]), val[4])) > 0
+                        ? decodeSpaces(val[3]) : null;
             if (newUser != null) {
                 userFolder = serverURL.resolve("user" + number);
                 boolean b;
@@ -183,6 +188,7 @@ public class ClientHandler {
                             && new File(userFolder.toString()).mkdir();
                 } catch (Exception ex) {
                     b = false;
+                    errorLogged = true;
                     logger.logError(ex);
                 }
                 if (!b) errCode = ERR_INTERNAL_ERROR.ordinal();
@@ -196,12 +202,12 @@ public class ClientHandler {
             // в случае ошибки - соответствующий ей код
             if (errCode < 0) {
                 freeSpace = MAXSIZE;
-                sendResponse(getCommand(SRV_ACCEPT, SRV_SUCCESS + "", newUser));
+                sendResponse(getCommand(SRV_ACCEPT, SRV_SUCCESS + "", encodeSpaces(newUser)));
                 sendFreeSpace();
                 sendFilesList(".", false);
                 sendFSType();
             } else
-                sendOpFailedResponse(errCode);
+                sendOpFailedResponse(errCode, COM_REGISTER, errorLogged);
         }
 
         // команда (запрос) завершения сеанса

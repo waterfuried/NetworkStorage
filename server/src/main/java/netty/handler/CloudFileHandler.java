@@ -1,7 +1,7 @@
 package netty.handler;
 
-import authService.AuthService;
 import prefs.*;
+import authService.*;
 
 import cloud.*;
 import cloud.request.*;
@@ -34,12 +34,14 @@ public class CloudFileHandler extends SimpleChannelInboundHandler<CloudMessage> 
     private Path userFolder;
     private String uploadTarget, userLogin;
     private int FSType = FS_UNK;
-    AuthService DBService;
+    private final AuthService DBService;
+    private final EventLogger logger;
 
     private final ArrayList<TransferOp> transfer = new ArrayList<>();
 
-    public CloudFileHandler(AuthService dbs) {
+    public CloudFileHandler(AuthService dbs, EventLogger logger) {
         DBService = dbs;
+        this.logger = logger;
     }
 
     @Override public void channelActive(ChannelHandlerContext ctx) throws Exception {
@@ -73,6 +75,9 @@ public class CloudFileHandler extends SimpleChannelInboundHandler<CloudMessage> 
                 sendFSType(ctx);
                 sendFilesList(ctx, "");
             }
+            if (rs.getErrCode() >= 0)
+                logger.logError(
+                        String.format(SERVER_ERROR_HANDLER, COM_AUTHORIZE, errMessage[rs.getErrCode()]));
             ctx.writeAndFlush(rs);
         }
         // запрос регистрации
@@ -96,6 +101,9 @@ public class CloudFileHandler extends SimpleChannelInboundHandler<CloudMessage> 
                 sendFSType(ctx);
                 sendFilesList(ctx, "");
             }
+            if (rs.getErrCode() >= 0)
+                logger.logError(
+                        String.format(SERVER_ERROR_HANDLER, COM_REGISTER, errMessage[rs.getErrCode()]));
             ctx.writeAndFlush(rs);
         }
         // запрос завершения сеанса пользователя
@@ -109,7 +117,11 @@ public class CloudFileHandler extends SimpleChannelInboundHandler<CloudMessage> 
         // запрос списка файлов/папок в пользовательской папке
         if (cloudMessage instanceof FilesListRequest) {
             FilesListRequest rq = (FilesListRequest)cloudMessage;
-            ctx.writeAndFlush(new FilesListResponse(userFolder.resolve(rq.getPath()), rq.getPath()));
+            FilesListResponse rs = new FilesListResponse(userFolder.resolve(rq.getPath()), rq.getPath());
+            if (rs.getErrCode() >= 0)
+                logger.logError(
+                        String.format(SERVER_ERROR_HANDLER, COM_GET_FILES, errMessage[rs.getErrCode()]));
+            ctx.writeAndFlush(rs);
         }
         if (cloudMessage instanceof SizeRequest) {
             Path p = userFolder.resolve(((SizeRequest)cloudMessage).getPath());
@@ -127,7 +139,6 @@ public class CloudFileHandler extends SimpleChannelInboundHandler<CloudMessage> 
                     ? Files.isDirectory(dst) ? -1L : Files.size(dst)
                     : 0L;
             UploadResponse rs = new UploadResponse(dst, rq.getSize(), rq.getModified());
-            System.out.println(exists+" "+curSize+" "+rs.getErrCode());
             if (rs.getErrCode() < 0) {
                 int id = SRV_SUCCESS;
                 if (curSize >= 0L && rq.getSize() == 0L)
@@ -140,10 +151,17 @@ public class CloudFileHandler extends SimpleChannelInboundHandler<CloudMessage> 
                             rs.setId(id = 1+startTransfer(dst.toString(), curSize, rq.getSize(), rq.getModified()));
                 if (id == SRV_SUCCESS && rs.getErrCode() < 0) {
                     if (rq.getSize() == 0L && curSize != 0L) sendFreeSpace(ctx);
-                    System.out.println("'"+userFolder.resolve(uploadTarget)+"', '"+uploadTarget+"'");
-                    ctx.writeAndFlush(new FilesListResponse(userFolder.resolve(uploadTarget), uploadTarget));
+                    FilesListResponse flrs =
+                            new FilesListResponse(userFolder.resolve(uploadTarget), uploadTarget);
+                    if (flrs.getErrCode() >= 0)
+                        logger.logError(
+                                String.format(SERVER_ERROR_HANDLER, COM_UPLOAD, errMessage[flrs.getErrCode()]));
+                    ctx.writeAndFlush(flrs);
                 }
             }
+            if (rs.getErrCode() >= 0)
+                logger.logError(
+                        String.format(SERVER_ERROR_HANDLER, COM_UPLOAD, errMessage[rs.getErrCode()]));
             ctx.writeAndFlush(rs);
         }
         // запрос копирования файла/папки с клиента на сервер
@@ -160,7 +178,7 @@ public class CloudFileHandler extends SimpleChannelInboundHandler<CloudMessage> 
                             new FileOutputStream(dst, true), BUF_SIZE)) {
                 bos.write(buf, 0, rq.getSize());
             } catch (Exception ex) {
-                ex.printStackTrace();
+                logger.logError(ex);
                 success = false;
             }
             if (success) {
@@ -174,7 +192,7 @@ public class CloudFileHandler extends SimpleChannelInboundHandler<CloudMessage> 
                             done = true;
                         }
                         catch (Exception ex) {
-                            ex.printStackTrace();
+                            logger.logError(ex);
                             success = false;
                         }
                     transfer.remove(id);
@@ -189,8 +207,16 @@ public class CloudFileHandler extends SimpleChannelInboundHandler<CloudMessage> 
                    файла можно было видеть, так сказать, в динамике */
                 if (done) {
                     if (spaceChanged) sendFreeSpace(ctx);
-                    ctx.writeAndFlush(new FilesListResponse(userFolder.resolve(uploadTarget), uploadTarget));
+                    FilesListResponse flrs =
+                            new FilesListResponse(userFolder.resolve(uploadTarget), uploadTarget);
+                    if (flrs.getErrCode() >= 0)
+                        logger.logError(
+                                String.format(SERVER_ERROR_HANDLER, COM_UPLOAD, errMessage[flrs.getErrCode()]));
+                    ctx.writeAndFlush(flrs);
                 }
+            if (rs.getErrCode() >= 0)
+                logger.logError(
+                        String.format(SERVER_ERROR_HANDLER, COM_UPLOAD, errMessage[rs.getErrCode()]));
             ctx.writeAndFlush(rs);
         }
         // запрос копирования файла/папки с сервера на клиент
@@ -203,7 +229,7 @@ public class CloudFileHandler extends SimpleChannelInboundHandler<CloudMessage> 
                 while ((bytesRead = bis.read(buf)) > 0)
                     ctx.writeAndFlush(new DownloadResponse(bytesRead, buf));
             } catch (Exception ex) {
-                ex.printStackTrace();
+                logger.logError(ex);
                 ctx.writeAndFlush(new DownloadResponse(0, null));
             }
         }
@@ -212,13 +238,16 @@ public class CloudFileHandler extends SimpleChannelInboundHandler<CloudMessage> 
             RemovalRequest rq = (RemovalRequest)cloudMessage;
             long freed = 0;
             try { freed = Files.size(userFolder.resolve(rq.getPath())); }
-            catch (IOException ex) { ex.printStackTrace(); }
+            catch (IOException ex) { logger.logError(ex); }
             RemovalResponse rs = new RemovalResponse(userFolder.resolve(rq.getPath()));
             if (rs.getErrCode() < 0) {
                 freeSpace += freed;
                 sendFreeSpace(ctx);
                 sendFilesList(ctx, rq.getPath());
             }
+            if (rs.getErrCode() >= 0)
+                logger.logError(
+                        String.format(SERVER_ERROR_HANDLER, COM_REMOVE, errMessage[rs.getErrCode()]));
             ctx.writeAndFlush(rs);
         }
         // запрос на переименование файла/папки
@@ -237,6 +266,9 @@ public class CloudFileHandler extends SimpleChannelInboundHandler<CloudMessage> 
                 }
                 sendFilesList(ctx, rq.getCurName());
             }
+            if (rs.getErrCode() >= 0)
+                logger.logError(
+                        String.format(SERVER_ERROR_HANDLER, COM_RENAME, errMessage[rs.getErrCode()]));
             ctx.writeAndFlush(rs);
         }
         // запрос локального копирования/перемещения файла/папки

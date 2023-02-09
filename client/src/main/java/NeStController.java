@@ -44,10 +44,10 @@
           ! например, при отправке файла с/на сервер, после кода ошибки укзывается имя команды
           ! (запроса) - это позволит корректно обрабатывать ситуации неполной передачи данных;
 
-    1. авторизация пользователя по логину и паролю;
-       длина пароля должна быть не меньше 4 и не более 12:
+    1. авторизация пользователя по логину и паролю:
          /user логин хеш-пароля
-       после доп. кода 0 возвращается имя пользователя, если он зарегистрирован
+       !! длина пароля должна быть не меньше 4 и не более 12:
+       !! после доп. кода 0 возвращается имя пользователя, если он зарегистрирован
     2. завершить сеанс пользователя:
          /quit
          /exit
@@ -81,10 +81,11 @@
     7. удалить файл/папку на сервере:
          /remove имя_файла/папки
        папка не может быть удалена, если она не пуста
-    8. зарегистрировать нового пользователя;
-       длина пароля должна быть не меньше 4 и не более 12 символов:
+    8. зарегистрировать нового пользователя:
          /reg логин пароль имя-пользователя email
-       после доп. кода 0 возвращается имя пользователя, если он зарегистрирован
+       !! длина пароля должна быть не меньше 4 и не более 12 символов:
+       !! после доп. кода 0 возвращается имя пользователя, если он зарегистрирован
+       !! имя пользователя допускает наличие пробелов
     9. переименовать файл/папку
          /rename путь_к_существующему_имени новое_имя
    10. тип ФС сервера (0=extFS-подобная, 1=FAT/NTFS-подобная, -1=не удалось определить)
@@ -201,7 +202,7 @@ public class NeStController implements Initializable, NativeKeyListener, Authori
                     }
                     if (cmd.startsWith(getCommand(SRV_ACCEPT))) {
                         String[] val = cmd.split(" ", 4);
-                        user = val[2];
+                        user = decodeSpaces(val[2]);
                         doLogInActions();
                     }
                 } else {
@@ -466,10 +467,13 @@ public class NeStController implements Initializable, NativeKeyListener, Authori
     @Override public void register(String login, String password, String username, String ... regData) {
         if (regData == null || regData.length == 0) return;
         if (useNetty)
-            sendToServer(new RegRequest(login, encodeSpaces(encode(password, true)), regData[0], username));
+            sendToServer(new RegRequest(login, encode(password, true), regData[0], username));
         else
             sendToServer(String.format(getCommand(COM_REGISTER, "%s %s %s %s"),
-                    login, encode(password, true), username, regData[0]));
+                    login,
+                    encodeSpaces(encode(password, true)),
+                    encodeSpaces(username),
+                    regData[0]));
     }
 
     // запрос списка файлов в пользовательской папке (или в ее подпапке)

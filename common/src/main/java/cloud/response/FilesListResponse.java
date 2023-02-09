@@ -30,7 +30,6 @@ public class FilesListResponse implements CloudMessage {
             if (entriesCount == 1 && entries.get(0).getName().length() == 0) entriesCount = 0;
         } catch (IOException ex) {
             errCode = Prefs.ErrorCode.ERR_NO_SUCH_FILE.ordinal();
-            ex.printStackTrace();
         }
     }
 

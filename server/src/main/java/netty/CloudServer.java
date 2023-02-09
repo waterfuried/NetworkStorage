@@ -1,7 +1,5 @@
 package netty;
 
-import authService.AuthService;
-import authService.AuthServiceDB;
 import netty.handler.*;
 
 import io.netty.bootstrap.ServerBootstrap;
@@ -12,11 +10,11 @@ import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.codec.serialization.*;
 
 import prefs.*;
+import authService.*;
 
 import java.util.Scanner;
 
-import static prefs.Prefs.getAllExitCommands;
-import static prefs.Prefs.isExitCommand;
+import static prefs.Prefs.*;
 
 public class CloudServer {
     public CloudServer() {
@@ -44,7 +42,7 @@ public class CloudServer {
                                     // обрабатывать сообщения
                                     new ObjectDecoder(ClassResolvers.cacheDisabled(null)),
                                     new ObjectEncoder(),
-                                    new CloudFileHandler(authService)
+                                    new CloudFileHandler(authService, logger)
                             );
                         }
                     });
