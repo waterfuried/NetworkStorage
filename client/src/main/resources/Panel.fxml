@@ -4,12 +4,13 @@
 <?import javafx.scene.layout.*?>
 <?import javafx.scene.text.Font?>
 
-<VBox xmlns="http://javafx.com/javafx/18" xmlns:fx="http://javafx.com/fxml/1" fx:controller="PanelController">
+<VBox xmlns="http://javafx.com/javafx/18" xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="PanelController">
 <!--
-если оставить эти свойства (по умолчанию),
-изменение размеров окна не будет влиять на размеры внутренних контейнеров;
-замена же их знака на "плюс" приведет к OutOfMemoryError:
-maxHeight="-Infinity" maxWidth="-Infinity" minHeight="-Infinity" minWidth="-Infinity"
+    если оставить эти свойства (по умолчанию),
+    изменение размеров окна не будет влиять на размеры внутренних контейнеров;
+    замена же их знака на "плюс" приведет к OutOfMemoryError:
+    maxHeight="-Infinity" maxWidth="-Infinity" minHeight="-Infinity" minWidth="-Infinity"
 -->
     <HBox>
         <VBox alignment="CENTER" HBox.hgrow="ALWAYS">
@@ -38,6 +39,8 @@ maxHeight="-Infinity" maxWidth="-Infinity" minHeight="-Infinity" minWidth="-Infi
              <MenuItem fx:id="cmiMove" disable="true"/>
              <MenuItem fx:id="cmiRename"/>
              <MenuItem fx:id="cmiRemove"/>
+             <SeparatorMenuItem />
+             <MenuItem fx:id="cmiGetSize"/>
            </items>
          </ContextMenu>
       </contextMenu>

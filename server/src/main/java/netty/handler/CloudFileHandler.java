@@ -1,7 +1,7 @@
 package netty.handler;
 
+import authService.AuthService;
 import prefs.*;
-import authService.*;
 
 import cloud.*;
 import cloud.request.*;
@@ -110,6 +110,10 @@ public class CloudFileHandler extends SimpleChannelInboundHandler<CloudMessage> 
         if (cloudMessage instanceof FilesListRequest) {
             FilesListRequest rq = (FilesListRequest)cloudMessage;
             ctx.writeAndFlush(new FilesListResponse(userFolder.resolve(rq.getPath()), rq.getPath()));
+        }
+        if (cloudMessage instanceof SizeRequest) {
+            Path p = userFolder.resolve(((SizeRequest)cloudMessage).getPath());
+            ctx.writeAndFlush(new SizeResponse(FileInfo.getSizes(p), FileInfo.getItems(p).size()));
         }
         // запрос копирования файла/папки с клиента на сервер
         if (cloudMessage instanceof UploadRequest) {

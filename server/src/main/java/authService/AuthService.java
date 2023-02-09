@@ -36,10 +36,10 @@ public interface AuthService {
     boolean alreadyRegistered(String username);
 
     /**
-     * проверить запуск сервиса
-     * @return true при успешном запуске, false - в противном случае
+     * проверить неактивность сервиса - важно именно то, что он не запустился
+     * @return true при неработающем сервисе, false - в противном случае
      **/
-    boolean isServiceActive();
+    boolean isServiceInactive();
 
     /**
      * завершить работу сервиса

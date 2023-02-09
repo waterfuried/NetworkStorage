@@ -74,7 +74,7 @@ public class ClientHandler {
             try (Stream<Path> pathStream = Files.list(path)) {
                 list = pathStream
                         .map(FileInfo::new)
-                        .map(fi -> encodeSpaces(fi.getFilename())+":"+fi.getSize()+":"+fi.getModifiedAsLong())
+                        .map(fi -> encodeSpaces(fi.getName())+":"+fi.getSize()+":"+fi.getModifiedAsLong())
                         .collect(Collectors.joining("\n"));
                 sz = list.split("\n").length;
                 if (sz == 1 && list.length() == 0) sz = 0;
@@ -89,7 +89,7 @@ public class ClientHandler {
     }
     private void sendFSType() {
         if (FSType == FS_UNK) FSType = getFSType(userFolder);
-        sendResponse(getCommand(SRV_ACCEPT, COM_FS, FSType+""));
+        sendResponse(getCommand(SRV_ACCEPT, COM_GET_FS, FSType+""));
     }
 
     private void sendOpFailedResponse(int errCode) {
@@ -216,6 +216,14 @@ public class ClientHandler {
 
         // запрос количества свободного места в папке пользователя
         if (s.startsWith(getCommand(COM_GET_SPACE))) sendFreeSpace();
+
+        // запрос размера подпапки в папке пользователя
+        if (s.startsWith(getCommand(COM_GET_SIZE))) {
+            String[] arg = cmd.split(" ");
+            Path p = userFolder.resolve(arg[1]);
+            sendResponse(getCommand(SRV_ACCEPT, COM_GET_SIZE,
+                    FileInfo.getSizes(p)+" "+FileInfo.getItems(p).size()));
+        }
 
         // запрос копирования файла/папки на сервер
         // /upload source_name destination_path size date

@@ -3,26 +3,31 @@
 <?import javafx.scene.control.*?>
 <?import javafx.scene.layout.*?>
 
-<VBox xmlns="http://javafx.com/javafx/18" xmlns:fx="http://javafx.com/fxml/1" fx:controller="NeStController">
+<VBox xmlns="http://javafx.com/javafx/18" xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="NeStController">
     <MenuBar>
         <Menu text="File">
             <MenuItem fx:id="menuItemLogIn" onAction="#showRegForm" text="Log In..." />
             <MenuItem fx:id="menuItemLogOut" disable="true" onAction="#logOut" text="Log out" />
             <SeparatorMenuItem />
             <Menu fx:id="ActionMenu" disable="true" text="Make action">
-                <MenuItem fx:id="menuItemUpload" text="Copy" disable="true" onAction="#copyOrUpload" />
-                <MenuItem fx:id="menuItemDownload" text="Move" disable="true" onAction="#moveOrDownload" />
+                <MenuItem fx:id="menuItemUpload" disable="true" onAction="#copyOrUpload" />
+                <MenuItem fx:id="menuItemDownload" disable="true" onAction="#moveOrDownload" />
                 <SeparatorMenuItem />
-                <MenuItem fx:id="menuItemRename" text="Rename" disable="true" onAction="#tryRename" />
+                <MenuItem fx:id="menuItemRename" disable="true" onAction="#tryRename" />
                 <SeparatorMenuItem />
-                <MenuItem fx:id="menuItemRemove" text="Remove" disable="true" onAction="#tryRemove" />
+                <MenuItem fx:id="menuItemRemove" disable="true" onAction="#tryRemove" />
+                <SeparatorMenuItem />
+                <MenuItem fx:id="menuItemGetSize" onAction="#getSize" />
             </Menu>
             <SeparatorMenuItem />
             <MenuItem onAction="#performExit" text="Exit" />
         </Menu>
         <Menu text="View">
-            <CheckMenuItem fx:id="menuItemViewLeft" disable="true" text="Left list: client" onAction="#toggleViewLeft"/>
-            <CheckMenuItem fx:id="menuItemViewRight" disable="true" text="Right list: client" onAction="#toggleViewRight"/>
+            <CheckMenuItem fx:id="menuItemViewLeft" text="Left list: client"
+                           disable="true" onAction="#toggleViewLeft"/>
+            <CheckMenuItem fx:id="menuItemViewRight" text="Right list: client"
+                           disable="true" onAction="#toggleViewRight"/>
         </Menu>
     </MenuBar>
     <HBox VBox.vgrow="ALWAYS">

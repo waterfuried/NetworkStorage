@@ -1,4 +1,5 @@
 import static prefs.Prefs.*;
+import authorization.*;
 
 import javafx.application.Platform;
 import javafx.fxml.FXML;
@@ -55,8 +56,10 @@ public class RegController implements Initializable {
                 if (btnAuth.isDisabled()) {
                     if (login.length() == 0) loginField.requestFocus();
                     else if (password.length() == 0) passwordField.requestFocus();
-                } else
-                    controller.authorize(login, password);
+                } else {
+                    // возможно, этот объект для чего-то еще можно будет использовать
+                    new OnlineUser(controller, login, password).authorize();
+                }
             });
         }
     }
@@ -76,13 +79,14 @@ public class RegController implements Initializable {
                         else if (canRegister && email.length() == 0) emailField.requestFocus();
                         else if (canRegister && username.length() == 0) usernameField.requestFocus();
                     } else
-                        controller.register(login, password, email, username);
+                        controller.register(login, password, username, email);
                 } else
                     if (btnAuth.isDisabled()) {
                         if (login.length() == 0) loginField.requestFocus();
                         else if (password.length() == 0) passwordField.requestFocus();
                     } else
                         controller.authorize(login, password);
+                        //new OnlineUser(controller, login, password).authorize();
             });
         }
     }

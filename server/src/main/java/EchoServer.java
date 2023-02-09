@@ -1,5 +1,6 @@
+import authService.AuthService;
+import authService.AuthServiceDB;
 import prefs.*;
-import authService.*;
 
 import java.io.IOException;
 import java.net.ServerSocket;
@@ -24,8 +25,8 @@ public class EchoServer {
         AuthService tmp;
         do {
             tmp = new AuthServiceDB(logger);
-            if (!tmp.isServiceActive()) tmp.close();
-        } while (!tmp.isServiceActive());
+            if (tmp.isServiceInactive()) tmp.close();
+        } while (tmp.isServiceInactive());
         final AuthService authService = tmp;
 
         try {

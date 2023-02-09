@@ -6,12 +6,12 @@ import java.time.*;
 import java.util.*;
 
 public class FileInfo implements Serializable {
-    private String filename;
+    private String name;
     private final long size; //определяет также тип элемента: -1 - папка, иначе - файл
     private final LocalDateTime modified;
 
-    public String getFilename() { return filename; }
-    public void setFilename(String filename) { this.filename = filename; }
+    public String getName() { return name; }
+    public void setName(String name) { this.name = name; }
 
     public long getSize() { return size; }
 
@@ -23,7 +23,7 @@ public class FileInfo implements Serializable {
 
     public FileInfo(Path path) {
         try {
-            filename = path.getFileName().toString();
+            name = path.getFileName().toString();
             size = Files.isDirectory(path) ? -1L : Files.size(path);
             modified = LocalDateTime.ofInstant(Files.getLastModifiedTime(path).toInstant(), ZoneId.systemDefault());
         } catch (IOException ex) {
@@ -31,8 +31,8 @@ public class FileInfo implements Serializable {
         }
     }
 
-    public FileInfo(String filename, long size, LocalDateTime modified) {
-        this.filename = filename;
+    public FileInfo(String name, long size, LocalDateTime modified) {
+        this.name = name;
         this.size = size;
         this.modified = modified;
     }

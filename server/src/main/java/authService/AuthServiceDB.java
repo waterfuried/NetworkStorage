@@ -205,5 +205,5 @@ public class AuthServiceDB implements AuthService {
         return -1;
     }
 
-    @Override public boolean isServiceActive() { return testDB(); }
+    @Override public boolean isServiceInactive() { return !testDB(); }
 }

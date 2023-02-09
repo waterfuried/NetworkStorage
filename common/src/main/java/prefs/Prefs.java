@@ -30,6 +30,10 @@ public class Prefs {
 
     public static final String COM_GET_SPACE = "space";
     public static final String COM_GET_FILES = "files";
+    public static final String COM_GET_FS = "fs";
+    public static final String COM_GET_SIZE = "size";
+    // название пункта меню для команды определения размера файла/папки
+    public static final String COM_GET_SIZE_TITLE = "Display size";
 
     public static final String COM_UPLOAD = "upload";
     public static final String COM_UPLOAD_DATA = "upld";
@@ -38,7 +42,6 @@ public class Prefs {
     public static final String COM_RENAME = "rename";
     public static final String COM_COPY = "copy";
     public static final String COM_MOVE = "move";
-    public static final String COM_FS = "fs";
 
     // команды терминала
     public static final String COM_TERM_CAT = "cat";
@@ -213,7 +216,7 @@ public class Prefs {
     /**
      * обнулить файл, если он существует, иначе создать новый
      * @param dst имя файла
-     * @throws IOException
+     * @throws IOException при ошибках записи в существующий файл или создании нового
      */
     public static void resetFile(Path dst) throws IOException {
         Files.write(dst, new byte[]{});
@@ -238,7 +241,7 @@ public class Prefs {
      * @param dst       имя копируемого файла/папки
      * @param size      размер копируемого файла/папки
      * @param modified  дата и время последнего изменения файла/папки
-     * @throws IOException
+     * @throws IOException при ошибках создания файла/папки и изменения даты и времени модификации
      */
     public static void makeFolderOrZero(Path dst, long size, long modified) throws IOException {
         if (size < 0L) Files.createDirectory(dst); else resetFile(dst);

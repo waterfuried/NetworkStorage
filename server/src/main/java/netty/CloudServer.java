@@ -1,5 +1,7 @@
 package netty;
 
+import authService.AuthService;
+import authService.AuthServiceDB;
 import netty.handler.*;
 
 import io.netty.bootstrap.ServerBootstrap;
@@ -10,7 +12,6 @@ import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.codec.serialization.*;
 
 import prefs.*;
-import authService.*;
 
 import java.util.Scanner;
 
@@ -26,8 +27,8 @@ public class CloudServer {
         AuthService tmp;
         do {
             tmp = new AuthServiceDB(logger);
-            if (!tmp.isServiceActive()) tmp.close();
-        } while (!tmp.isServiceActive());
+            if (tmp.isServiceInactive()) tmp.close();
+        } while (tmp.isServiceInactive());
         final AuthService authService = tmp;
 
         try {
