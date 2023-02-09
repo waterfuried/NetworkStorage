@@ -1,3 +1,5 @@
+package network;
+
 import cloud.*;
 
 import io.netty.handler.codec.serialization.*;

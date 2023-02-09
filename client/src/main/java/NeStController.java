@@ -44,10 +44,10 @@
           ! например, при отправке файла с/на сервер, после кода ошибки укзывается имя команды
           ! (запроса) - это позволит корректно обрабатывать ситуации неполной передачи данных;
 
-    1. авторизация пользователя по логину и паролю;
-       длина пароля должна быть не меньше 4 и не более 12:
+    1. авторизация пользователя по логину и паролю:
          /user логин хеш-пароля
-       после доп. кода 0 возвращается имя пользователя, если он зарегистрирован
+       !! длина пароля должна быть не меньше 4 и не более 12:
+       !! после доп. кода 0 возвращается имя пользователя, если он зарегистрирован
     2. завершить сеанс пользователя:
          /quit
          /exit
@@ -81,16 +81,20 @@
     7. удалить файл/папку на сервере:
          /remove имя_файла/папки
        папка не может быть удалена, если она не пуста
-    8. зарегистрировать нового пользователя;
-       длина пароля должна быть не меньше 4 и не более 12 символов:
+    8. зарегистрировать нового пользователя:
          /reg логин пароль имя-пользователя email
-       после доп. кода 0 возвращается имя пользователя, если он зарегистрирован
+       !! длина пароля должна быть не меньше 4 и не более 12 символов:
+       !! после доп. кода 0 возвращается имя пользователя, если он зарегистрирован
+       !! имя пользователя допускает наличие пробелов
     9. переименовать файл/папку
          /rename путь_к_существующему_имени новое_имя
    10. тип ФС сервера (0=extFS-подобная, 1=FAT/NTFS-подобная, -1=не удалось определить)
          /fs
    11. копировать/переместить файл
          /copy путь_к_исходному_имени путь_назначения [1=переместить]
+   12. получить размер папки:
+         /size имя_папки
+       возвращает размер в байтах (в значении доп. кода) и число элементов в папке
 
     команды 5 и 6 работают по принципу "1 за раз" - например,
       при копировании папки на сервер (размер указывается как -1)
@@ -102,12 +106,6 @@
            поэтому не всегда есть гарантия, что файл/папка существует в месте назначения,
            и его/ее наличие нужно проверять локально, используя сервис ФС
 */
-import prefs.*;
-
-import cloud.*;
-import cloud.request.*;
-import cloud.response.*;
-
 import javafx.application.Platform;
 import javafx.fxml.*;
 import javafx.scene.*;
@@ -119,8 +117,17 @@ import javafx.stage.*;
 import java.io.*;
 import java.net.URL;
 import java.nio.file.*;
+import java.text.*;
 import java.util.*;
 import java.util.concurrent.*;
+
+import prefs.*;
+import network.*;
+import authorization.*;
+
+import cloud.*;
+import cloud.request.*;
+import cloud.response.*;
 
 import static prefs.Prefs.*;
 import static prefs.Prefs.ErrorCode.*;
@@ -128,13 +135,14 @@ import static prefs.Prefs.ErrorCode.*;
 import com.github.kwhat.jnativehook.*;
 import com.github.kwhat.jnativehook.keyboard.*;
 
-public class NeStController implements Initializable, NativeKeyListener {
+public class NeStController implements Initializable, NativeKeyListener, Authorization {
     @FXML private VBox clientView, serverView;
     @FXML private Menu ActionMenu;
     @FXML private MenuItem
             menuItemLogIn, menuItemLogOut,
             menuItemUpload, menuItemDownload,
-            menuItemRename, menuItemRemove;
+            menuItemRename, menuItemRemove,
+            menuItemGetSize;
     @FXML private CheckMenuItem menuItemViewLeft, menuItemViewRight;
 
     private Network network;
@@ -155,7 +163,12 @@ public class NeStController implements Initializable, NativeKeyListener {
         обработке теоретически возможно следующее: когда запись одного куска еще не закончена,
         но началась обработка следующего, то буфер, используемый для записи информации
         предыдущего куска, заполняется данными нового.
-        Использование раздельных буферов такую возможность исключает */
+        Использование раздельных буферов такую возможность исключает.
+
+        Теоретически возможно обходиться и одним буфером при параллельной обработке,
+        сделав ее псевдопараллельной (синхронизированной) - поставить на буфер монитор
+        и запрещать (блокировать) запись в буфер, пока чтение из него не закончено -
+        но такое его использование отразится на быстродействии */
     // private byte[] buf;
 
     private String user, newName; // имя пользователя; новое имя при переименовании файла/папки
@@ -189,7 +202,7 @@ public class NeStController implements Initializable, NativeKeyListener {
                     }
                     if (cmd.startsWith(getCommand(SRV_ACCEPT))) {
                         String[] val = cmd.split(" ", 4);
-                        user = val[2];
+                        user = decodeSpaces(val[2]);
                         doLogInActions();
                     }
                 } else {
@@ -285,7 +298,15 @@ public class NeStController implements Initializable, NativeKeyListener {
                                 if (arg[1].equalsIgnoreCase(COM_COPY))
                                     Platform.runLater(() -> getSrcPC().updateFreeSpace(freeSpace));
                                 break;
-                            case COM_FS: serverFS = Integer.parseInt(arg[2]);
+                            case COM_GET_SIZE:
+                                try {
+                                    long size = Long.parseLong(arg[2]);
+                                    int itemCount = Integer.parseInt(arg[2]);
+                                    Platform.runLater(() ->
+                                            displayItemSize(true, size, itemCount));
+                                } catch (Exception ex) {}
+                                break;
+                            case COM_GET_FS: serverFS = Integer.parseInt(arg[2]);
                         }
                     }
                     // обработать ошибки при выполнении команд/запросов
@@ -354,6 +375,12 @@ public class NeStController implements Initializable, NativeKeyListener {
                         } catch (InterruptedException ex) { ex.printStackTrace(); }
                     } else
                         Messages.displayError(ErrorCode.values()[rs.getErrCode()], "");
+                }
+                // запрос размера указанной папки
+                if (message instanceof SizeResponse) {
+                    SizeResponse rs = (SizeResponse)message;
+                    Platform.runLater(() ->
+                            displayItemSize(true, rs.getSize(), rs.getItemCount()));
                 }
                 // запрос копирования с клиента на сервер
                 if (message instanceof UploadResponse) {
@@ -429,7 +456,7 @@ public class NeStController implements Initializable, NativeKeyListener {
        команды/запросы к серверу
     */
     // запрос авторизации
-    void authorize(String login, String password) {
+    @Override public void authorize(String login, String password) {
         if (useNetty)
             sendToServer(new AuthRequest(login, getHash(password)));
         else
@@ -437,12 +464,16 @@ public class NeStController implements Initializable, NativeKeyListener {
                 getCommand(COM_AUTHORIZE, "%s %s"), login, getHash(password)));
     }
 
-    void register(String login, String password, String email, String username) {
+    @Override public void register(String login, String password, String username, String ... regData) {
+        if (regData == null || regData.length == 0) return;
         if (useNetty)
-            sendToServer(new RegRequest(login, encodeSpaces(encode(password, true)), email, username));
+            sendToServer(new RegRequest(login, encode(password, true), regData[0], username));
         else
             sendToServer(String.format(getCommand(COM_REGISTER, "%s %s %s %s"),
-                    login, encode(password, true), username, email));
+                    login,
+                    encodeSpaces(encode(password, true)),
+                    encodeSpaces(username),
+                    regData[0]));
     }
 
     // запрос списка файлов в пользовательской папке (или в ее подпапке)
@@ -451,6 +482,14 @@ public class NeStController implements Initializable, NativeKeyListener {
             sendToServer(new FilesListRequest(folder));
         else
             sendToServer(getCommand(COM_GET_FILES, folder));
+    }
+
+    // запрос размера подпапки в пользовательской папке
+    void requestSize(String folder) {
+        if (useNetty)
+            sendToServer(new SizeRequest(folder));
+        else
+            sendToServer(getCommand(COM_GET_SIZE, folder));
     }
 
     // запрос на удаление файла/папки
@@ -583,7 +622,7 @@ public class NeStController implements Initializable, NativeKeyListener {
         if (useNetty)
             sendToServer(new DownloadRequest(getSrcPC().getFullSelectedFilename()));
         else
-            sendToServer(getCommand(COM_DOWNLOAD, encodeSpaces(getSrcPC().getSelectedFilename())));
+            sendToServer(getCommand(COM_DOWNLOAD, encodeSpaces(getSrcPC().getFullSelectedFilename())));
     }
 
     // продолжать передачу файла с сервера
@@ -931,6 +970,42 @@ public class NeStController implements Initializable, NativeKeyListener {
                     (cliCtrl.getFilesTable().isFocused() ? srvCtrl : cliCtrl).updateFilesList();
     }
 
+    /**
+     *    отобразить размер выбранного элемента, вычислив его, если элемент - папка,
+     *    в последнем случае, если элемент находится на сервере, только отправить ему запрос -
+     *    отображение будет произведено после получения отклика сервера
+     */
+    //
+    @FXML void getSize() {
+        PanelController pc = getSrcPC();
+        long size = pc.getSelectedFileSize();
+        int itemCount = 0;
+        boolean folder = size < 0;
+        if (size < 0)
+            if (pc.atServerMode())
+                requestSize(pc.getFullSelectedFilename());
+            else {
+                Path p = Paths.get(pc.getFullSelectedFilename());
+                size = FileInfo.getSizes(p);
+                itemCount = FileInfo.getItems(p).size();
+            }
+        if (size >= 0) displayItemSize(folder, size, itemCount);
+    }
+
+    // отобразить информацию о размере выбранного файла/папки
+    void displayItemSize(boolean folder, long size, int itemCount) {
+        DecimalFormat fmt = (DecimalFormat)NumberFormat.getInstance();
+        DecimalFormatSymbols sym = fmt.getDecimalFormatSymbols();
+        sym.setGroupingSeparator(' ');
+        fmt.setDecimalFormatSymbols(sym);
+        String s = "Selected "+(folder ? "folder" : "file")+" "+
+                (folder && size == 0 && itemCount == 0
+                        ? "is empty"
+                        : "size: "+fmt.format(size)+" bytes")+
+                ".";
+        Messages.displayMessage(Alert.AlertType.INFORMATION, s, "Selection size");
+    }
+
     // действия при выходе
     @FXML public void performExit() {
         logOut();
@@ -1032,6 +1107,12 @@ public class NeStController implements Initializable, NativeKeyListener {
         srvCtrl.getFilesTable().setOnDragOver(ev -> dragOver(false, ev));
         cliCtrl.getFilesTable().setOnDragDropped(this::dragDropped);
         srvCtrl.getFilesTable().setOnDragDropped(this::dragDropped);
+        // названия пунктов меню операций с файлами/папками
+        // связаны с названиями соответствующих команд
+        menuItemRemove.setText(capitalize(COM_REMOVE));
+        menuItemRename.setText(capitalize(COM_RENAME));
+        menuItemGetSize.setText(COM_GET_SIZE_TITLE);
+        refreshFileCmd();
 
         try {
             Thread readThread;

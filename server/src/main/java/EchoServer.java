@@ -24,8 +24,8 @@ public class EchoServer {
         AuthService tmp;
         do {
             tmp = new AuthServiceDB(logger);
-            if (!tmp.isServiceActive()) tmp.close();
-        } while (!tmp.isServiceActive());
+            if (tmp.isServiceInactive()) tmp.close();
+        } while (tmp.isServiceInactive());
         final AuthService authService = tmp;
 
         try {

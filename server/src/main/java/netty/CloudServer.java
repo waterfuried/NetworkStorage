@@ -14,8 +14,7 @@ import authService.*;
 
 import java.util.Scanner;
 
-import static prefs.Prefs.getAllExitCommands;
-import static prefs.Prefs.isExitCommand;
+import static prefs.Prefs.*;
 
 public class CloudServer {
     public CloudServer() {
@@ -26,8 +25,8 @@ public class CloudServer {
         AuthService tmp;
         do {
             tmp = new AuthServiceDB(logger);
-            if (!tmp.isServiceActive()) tmp.close();
-        } while (!tmp.isServiceActive());
+            if (tmp.isServiceInactive()) tmp.close();
+        } while (tmp.isServiceInactive());
         final AuthService authService = tmp;
 
         try {
@@ -43,7 +42,7 @@ public class CloudServer {
                                     // обрабатывать сообщения
                                     new ObjectDecoder(ClassResolvers.cacheDisabled(null)),
                                     new ObjectEncoder(),
-                                    new CloudFileHandler(authService)
+                                    new CloudFileHandler(authService, logger)
                             );
                         }
                     });

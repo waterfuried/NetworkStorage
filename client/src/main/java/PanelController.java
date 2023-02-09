@@ -24,7 +24,7 @@ public class PanelController implements Initializable {
     @FXML private TextField curPath;
     @FXML private TableView<FileInfo> filesTable;
     @FXML private Button btnLevelUp, btnGoBack;
-    @FXML private MenuItem cmiCopy, cmiMove, cmiRename, cmiRemove;
+    @FXML private MenuItem cmiCopy, cmiMove, cmiRename, cmiRemove, cmiGetSize;
 
     private Stack<String> prevPath;
     private int curDiskIdx, clientFS;
@@ -150,7 +150,7 @@ public class PanelController implements Initializable {
     }
 
     String getSelectedFilename() {
-        return filesTable.getSelectionModel().getSelectedItem().getFilename();
+        return filesTable.getSelectionModel().getSelectedItem().getName();
     }
 
     long getSelectedFileSize() {
@@ -186,13 +186,13 @@ public class PanelController implements Initializable {
 
     int getIndexOf(String entryName) {
         for (int i = 0; i < filesTable.getItems().size(); i++)
-            if (filesTable.getItems().get(i).getFilename().equals(entryName)) return i;
+            if (filesTable.getItems().get(i).getName().equals(entryName)) return i;
         return -1;
     }
 
     int getIndexOfAnyMatch(String entryName) {
         for (int i = 0; i < filesTable.getItems().size(); i++)
-            if (filesTable.getItems().get(i).getFilename().equalsIgnoreCase(entryName)) return i;
+            if (filesTable.getItems().get(i).getName().equalsIgnoreCase(entryName)) return i;
         return -1;
     }
 
@@ -257,7 +257,7 @@ public class PanelController implements Initializable {
         if (restore) {
             int row = filesTable.getSelectionModel().getSelectedIndex();
             FileInfo cfi = filesTable.getItems().get(row);
-            cfi.setFilename(curName);
+            cfi.setName(curName);
             filesTable.getItems().set(row, cfi);
             filesTable.refresh();
         }
@@ -315,9 +315,10 @@ public class PanelController implements Initializable {
     void refreshFileOps(boolean cantCopy, boolean cantMove) {
         cmiCopy.setDisable(cantCopy);
         cmiMove.setDisable(cantMove);
-        boolean empty = filesTable.getItems().size() == 0;
+        boolean empty = filesTable.getSelectionModel().isEmpty();
         cmiRename.setDisable(empty);
         cmiRemove.setDisable(empty);
+        cmiGetSize.setDisable(empty);
     }
 
     /*
@@ -342,7 +343,7 @@ public class PanelController implements Initializable {
         TableColumn<FileInfo, Long> fileSizeColumn = new TableColumn<>("Size");
         TableColumn<FileInfo, String> fileDateColumn = new TableColumn<>("Date");
 
-        fileNameColumn.setCellValueFactory(p -> new SimpleStringProperty(p.getValue().getFilename()));
+        fileNameColumn.setCellValueFactory(p -> new SimpleStringProperty(p.getValue().getName()));
         fileNameColumn.setCellFactory(TextFieldTableCell.forTableColumn());
         fileNameColumn.setOnEditStart(ev -> editing = true);
         fileNameColumn.setOnEditCancel(ev -> editing = false);
@@ -391,7 +392,7 @@ public class PanelController implements Initializable {
 
         updateFilesList(".");
         clientFS = getFSType(Paths.get(getCurPath()));
-        boolean empty = filesTable.getItems().size() == 0;
+        boolean empty = filesTable.getSelectionModel().isEmpty();
         cmiCopy.setText(capitalize(COM_COPY));
         cmiCopy.setDisable(empty);
         cmiCopy.setOnAction(ev -> parentController.copyOrUpload());
@@ -404,5 +405,8 @@ public class PanelController implements Initializable {
         cmiRemove.setText(capitalize(COM_REMOVE));
         cmiRemove.setDisable(empty);
         cmiRemove.setOnAction(ev -> parentController.tryRemove());
+        cmiGetSize.setText(COM_GET_SIZE_TITLE);
+        cmiGetSize.setDisable(empty);
+        cmiGetSize.setOnAction(ev -> parentController.getSize());
     }
 }
