@@ -1,6 +1,7 @@
 package cloud.response;
 
 import cloud.CloudMessage;
+import static prefs.Prefs.*;
 import static prefs.Prefs.ErrorCode.*;
 
 import java.io.IOException;
@@ -10,7 +11,7 @@ public class RemovalResponse implements CloudMessage {
     private int errCode;
 
     public RemovalResponse(Path path) {
-        errCode = -1;
+        errCode = NO_ERROR;
         try {
             Files.delete(path);
         } catch (IOException ex) {

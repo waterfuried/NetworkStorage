@@ -574,7 +574,13 @@ public class NeStController implements Initializable, NativeKeyListener, Authori
     // отправка запроса копирования с клиента на сервер
     // /upload source_name destination_path size date
     private void upload() {
-        //TODO: при копировании больших файлов следовало бы отображать индикатор копирования
+        //TODO: при копировании больших файлов следовало бы отображать индикатор копирования;
+        // локальное копирование/перемещение сейчас выполняется вызовом методов
+        // Files.copy/move, не предоставляющих "обратной связи" в процессе,
+        // иначе говоря, чтобы иметь возможность узнать в какой-либо момент,
+        // насколько процесс передачи выполнен в целом, его нужно заменить
+        // на использование того же подхода, что и при передаче через сеть -
+        // поблочно, через потоки файлового ввода/вывода
         PanelController cli = getSrcPC(), srv = getDstPC();
         String dst = Paths.get(srv.getCurPath()).toString();
         if (dst.length() == 0 && !useNetty) dst = ".";
@@ -819,11 +825,10 @@ public class NeStController implements Initializable, NativeKeyListener, Authori
 
     // обновить доступность субменю операций с файлами/папками
     void refreshFileOps() {
-        boolean noneSelected = !clientFocused && !serverFocused;
+        boolean noneSelected = !clientFocused && !serverFocused, cantCopy, cantMove;
         ActionMenu.setDisable(noneSelected);
         menuItemRemove.setDisable(noneSelected);
         menuItemRename.setDisable(noneSelected);
-        boolean cantCopy, cantMove;
         if (bothLocal())
             cantCopy = cantMove = noneSelected || sameContent();
         else {

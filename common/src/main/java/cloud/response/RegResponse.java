@@ -1,6 +1,7 @@
 package cloud.response;
 
 import cloud.CloudMessage;
+import static prefs.Prefs.*;
 import static prefs.Prefs.ErrorCode.*;
 
 import java.io.File;
@@ -18,7 +19,7 @@ public class RegResponse implements CloudMessage {
 
     public RegResponse(String username, int userNumber, Path userFolder) {
         this.username = username;
-        errCode = -1;
+        errCode = NO_ERROR;
         if (username != null) {
             boolean b;
             try {

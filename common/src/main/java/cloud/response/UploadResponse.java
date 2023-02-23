@@ -12,7 +12,7 @@ public class UploadResponse implements CloudMessage {
     private final boolean started;
 
     public UploadResponse(Path dst, long size, long modified) {
-        errCode = -1;
+        errCode = NO_ERROR;
         started = false;
         // создать новую папку или файл нулевого размера
         // обновление даты и времени: если по какой-то причине оно не произошло,
@@ -21,7 +21,7 @@ public class UploadResponse implements CloudMessage {
         catch (Exception ex) { errCode = ERR_CANNOT_COMPLETE.ordinal(); }
     }
 
-    public UploadResponse(int id) { this.id = id; errCode = -1; started = true; }
+    public UploadResponse(int id) { this.id = id; errCode = NO_ERROR; started = true; }
 
     public int getErrCode() { return errCode; }
     public void setErrCode(ErrorCode errCode) { this.errCode = errCode.ordinal(); }

@@ -1,6 +1,7 @@
 package cloud.response;
 
 import cloud.CloudMessage;
+import static prefs.Prefs.*;
 import static prefs.Prefs.ErrorCode.*;
 
 import java.io.File;
@@ -18,7 +19,7 @@ public class AuthResponse implements CloudMessage {
 
     public AuthResponse(String username, Path userFolder) {
         this.username = username;
-        errCode = -1;
+        errCode = NO_ERROR;
         if (username != null) {
             if (username.length() > 0) {
                 boolean b;

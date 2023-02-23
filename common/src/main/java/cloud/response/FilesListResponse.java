@@ -2,6 +2,7 @@ package cloud.response;
 
 import cloud.CloudMessage;
 import prefs.*;
+import static prefs.Prefs.*;
 
 import java.io.*;
 
@@ -21,7 +22,7 @@ public class FilesListResponse implements CloudMessage {
 
     public FilesListResponse(Path path, String folder) {
         this.folder = folder;
-        errCode = -1;
+        errCode = NO_ERROR;
         try (Stream<Path> pathStream = Files.list(path)) {
             entries = pathStream
                     .map(FileInfo::new)

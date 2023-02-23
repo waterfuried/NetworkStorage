@@ -2,6 +2,7 @@ package cloud.response;
 
 import cloud.CloudMessage;
 import static prefs.Prefs.ErrorCode;
+import static prefs.Prefs.NO_ERROR;
 
 public class CopyResponse implements CloudMessage {
     private int errCode;
@@ -11,7 +12,7 @@ public class CopyResponse implements CloudMessage {
     public CopyResponse(String name, boolean moved) {
         this.name = name;
         this.moved = moved;
-        errCode = -1;
+        errCode = NO_ERROR;
     }
 
     public CopyResponse(ErrorCode errCode) { this.errCode = errCode.ordinal(); }
