@@ -57,6 +57,10 @@ public class Prefs {
     public static final String SRV_ACCEPT = "NEST_DONE";
     public static final int SRV_SUCCESS = 0; // выполнено успешно
 
+    // в методах, предполагающих возникновение какой-либо ошибки,
+    // тем не менее возможно и ее отсутствие
+    public static final int NO_ERROR = -1;
+
     public static final String SRV_REFUSE = "NEST_ERR";
     public static final String ERR_OPERATION_FAILED = "Operation failed";
 

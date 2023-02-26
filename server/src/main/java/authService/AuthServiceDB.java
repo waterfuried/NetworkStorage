@@ -6,7 +6,10 @@ import static prefs.Prefs.*;
 
 public class AuthServiceDB implements AuthService {
     public static final String JDBC = "jdbc";
+    // название таблицы с данными пользователей
     private static final String DB_USERS_TABLE = "users";
+    // признак достижения предельного числа пользователей в таблице
+    public static final int ERR_NUMERIC_OVERFLOW = -2;
 
     private static Connection connection;
     private static Statement st;
@@ -160,7 +163,7 @@ public class AuthServiceDB implements AuthService {
             return 0;
         else {
             int number = getFirstFreeNumber();
-            if (number <= 0) return number == 0 ? -2 : number;
+            if (number <= 0) return number == 0 ? ERR_NUMERIC_OVERFLOW : number;
             try (PreparedStatement ps = connection.prepareStatement(
                     adjustQuery("INSERT INTO %s (login, pwd, email, username, usernum) VALUES (?, ?, ?, ?, ?);"))) {
                 ps.setString(1, login);
@@ -173,17 +176,6 @@ public class AuthServiceDB implements AuthService {
             } catch (SQLException ex) { logger.logError(ex); }
         }
         return -1;
-    }
-
-    /**
-     * зарегистрировать нового пользователя: вариация с паттерном Строитель
-     */
-    @Override public int registerUser(AuthData data) {
-        return registerUser(
-                data.getLogin(),
-                data.getPassword(),
-                data.getUsername(),
-                data.getUserData());
     }
 
     /**

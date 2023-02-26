@@ -57,7 +57,7 @@ public class ClientHandler {
     }
     private void sendFilesList(String folder, boolean extractPath) {
         Path path = userFolder;
-        int errCode = -1, sz = 0;
+        int errCode = NO_ERROR, sz = 0;
         String list = "", ofFolder = folder;
         if (!folder.equals("."))
             try {
@@ -123,7 +123,7 @@ public class ClientHandler {
 
         // запрос авторизации
         if (s.startsWith(getCommand(COM_AUTHORIZE))) {
-            int errCode = -1;
+            int errCode = NO_ERROR;
             String[] val = cmd.split(" ", 3);
             String newUser = DBService.getUserInfo(val[1], Integer.parseInt(val[2]));
             if (newUser != null)
@@ -162,21 +162,13 @@ public class ClientHandler {
         // запрос регистрации
         if (s.startsWith(getCommand(COM_REGISTER))) {
             // /reg логин пароль имя-пользователя email
-            int errCode = -1;
+            int errCode = NO_ERROR;
             String[] val = cmd.split(" ", 5);
             int number = 0;
             String newUser = val[2].length() < MIN_PWD_LEN || val[2].length() > MAX_PWD_LEN
                     ? null
                     : (number = DBService.registerUser(
-                            // с шаблоном "Строитель"
-                            new AuthData.AuthBuilder()
-                                    .login(val[1])
-                                    .password(encode(decodeSpaces(val[2]), false))
-                                    .username(decodeSpaces(val[3]))
-                                    .userData(new String[]{ val[4] })
-                                    .build())) > 0
-                            // ... и без него
-                            //val[1], encode(decodeSpaces(val[2]),false), decodeSpaces(val[3]), val[4])) > 0
+                            val[1], encode(decodeSpaces(val[2]),false), decodeSpaces(val[3]), val[4])) > 0
                         ? decodeSpaces(val[3]) : null;
             if (newUser != null) {
                 userFolder = serverURL.resolve("user" + number);
@@ -248,7 +240,7 @@ public class ClientHandler {
             uploadTarget = arg[2].equals(".") ? "" : decodeSpaces(arg[2]);
             Path dst = userFolder.resolve(uploadTarget).resolve(arg[1]);
 
-            int errCode = -1;
+            int errCode = NO_ERROR;
             long curSize = 0L;
             try {
                 if (Files.exists(dst))
@@ -286,7 +278,7 @@ public class ClientHandler {
         // /upld id block_size data_block
         if (s.startsWith(getCommand(COM_UPLOAD_DATA))) {
             String[] arg = cmd.split(" ", 4);
-            int id = Integer.parseInt(arg[1])-1;
+            int id = Integer.parseInt(arg[1]) - 1;
             long size = Long.parseLong(arg[2]);
             boolean spaceChanged = size != transfer.get(id).getCurSize();
             byte[] buf = Arrays.copyOf(Base64.getDecoder().decode(arg[3]), arg[3].length());
@@ -348,7 +340,7 @@ public class ClientHandler {
         // /remove entry_name
         if (s.startsWith(getCommand(COM_REMOVE))) {
             String[] arg = cmd.split(" ", 2);
-            int errCode = -1;
+            int errCode = NO_ERROR;
             long freed = 0;
             try {
                 Path p = userFolder.resolve(decodeSpaces(arg[1]));
