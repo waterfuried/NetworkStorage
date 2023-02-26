@@ -1,8 +1,7 @@
 package cloud.response;
 
 import cloud.CloudMessage;
-import static prefs.Prefs.ErrorCode;
-import static prefs.Prefs.NO_ERROR;
+import static prefs.Prefs.*;
 
 public class CopyResponse implements CloudMessage {
     private int errCode;
